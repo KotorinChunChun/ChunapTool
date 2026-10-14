@@ -10,6 +10,7 @@
     <FileVersion>0.1.0.0</FileVersion>
     <Product>ChunapTool</Product>
     <AssemblyTitle>ChunapTool</AssemblyTitle>
+    <ApplicationIcon>assets/ChunapTool.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>

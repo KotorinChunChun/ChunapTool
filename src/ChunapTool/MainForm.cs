@@ -31,6 +31,7 @@ public sealed class MainForm : BrandedForm
     private readonly System.Windows.Forms.Timer filterDelay = new() { Interval = 250 };
     private readonly System.Windows.Forms.Timer editDelay = new() { Interval = 250 };
     private bool reading, busy, dirty;
+    internal string? ManagementStopBlockReason => busy ? "ウィンドウ操作中のため停止できません。" : null;
     private WindowEntry? selected;
     private WindowState? current;
     private bool previewFailed;

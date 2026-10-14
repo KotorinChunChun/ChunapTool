@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "chunap-tool",
+  "name": "ChunapTool",
+  "version": "0.1.0",
+  "summary": "選択したウィンドウの位置・サイズ・最大化を調整する",
+  "category": "ウィンドウ操作",
+  "executable": "artifacts/management/bin/ChunapTool/debug/ChunapTool.exe",
+  "installedExecutable": "ChunapTool.exe",
+  "appId": "KotorinToys.ChunapTool",
+  "manual": "docs/guide.md",
+  "readme": "README.md",
+  "shortcuts": "config/shortcuts.json",
+  "distributionStatus": "unpublished",
+  "supportedEnvironment": "windows11-x64",
+  "investigationStatus": "confirmed",
+  "capabilities": [
+    "status",
+    "show",
+    "stop",
+    "silent-start"
+  ],
+  "runtimes": [
+    {
+      "id": "dotnet-desktop",
+      "name": ".NET Desktop Runtime 10 (x64)",
+      "kind": "dotnet-desktop",
+      "major": 10,
+      "guide": "開発実行には.NET 10 SDK、フレームワーク依存EXEには.NET Desktop Runtime 10 x64が必要です。"
+    }
+  ]
+}

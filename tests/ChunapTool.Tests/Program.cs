@@ -28,6 +28,7 @@ internal static class Program
             return 2;
         }
 
+        ManagementTests.Run(Path.GetTempPath());
         return CoreTests.Run();
     }
 }
