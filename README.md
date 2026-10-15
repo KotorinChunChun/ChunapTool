@@ -4,7 +4,9 @@ Windowsのウィンドウを選び、位置・サイズ・最大化を調整す�
 
 ## 起動
 
-Windows 11と.NET 10 SDKを使用します。PowerShell 7で実行してください。
+Windows 11 x64向けの[ポータブル版](https://github.com/KotorinChunChun/ChunapTool/releases/tag/v0.1.1)はZIPをすべて展開し、`ChunapTool.exe`を起動します。.NET 10ランタイムを同梱しています。配布ZIPは未署名です。同じリリースの`SHA256SUMS.txt`でハッシュを確認できます。
+
+ソースから起動する場合は.NET 10 SDKとPowerShell 7を使用します。
 
 ```powershell
 cd C:\develop\KotorinToys\tools\ChunapTool
@@ -24,10 +26,10 @@ Python、OpenCV、FFmpegの準備は不要です。録画や動画編集機能�
 
 画像から探す場合は「サムネイル選択」を押します。作業領域いっぱいの選択画面で画像とウィンドウ名を確認し、クリックして確定します。検索は入力直後に絞り込み、画像は1枚ずつ数秒おきに更新します。選択・取消で閉じると撮影も停止します。
 
-現在の開発版はv0.1.1です。詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[v0.1.1実装記録](dev/history/v0.1.1/v0.1.1-imp.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。
+現在の開発版はv0.1.1です。ソースは[GitHubリポジトリ](https://github.com/KotorinChunChun/ChunapTool)、詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[v0.1.1実装記録](dev/history/v0.1.1/v0.1.1-imp.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。
 
 KotorinToys配下の独立リポジトリです。本体からの開発版起動・停止・状態確認に対応しています。
 
 ## KotorinToys管理連携（2026-10-15追加）
 
-本体の一覧からの開発版起動・既存画面表示・状態確認・正常停止に対応しました。上記移植時点の未登録範囲を、この追加で更新します。配布・正式インストール・外部公開は未実施です。[管理連携と検証用起動](docs/kotorintoys-integration.md)を参照してください。
+本体の一覧からの開発版起動・既存画面表示・状態確認・正常停止に対応しました。ポータブル版の配布とは別に、本体からの正式インストール・更新は未対応です。[管理連携と検証用起動](docs/kotorintoys-integration.md)を参照してください。
