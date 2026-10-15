@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "chunap-tool",
   "name": "ChunapTool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "summary": "選択したウィンドウの位置・サイズ・最大化を調整する",
   "category": "ウィンドウ操作",
   "executable": "artifacts/management/bin/ChunapTool/debug/ChunapTool.exe",

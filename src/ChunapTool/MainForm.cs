@@ -13,7 +13,8 @@ public sealed class MainForm : BrandedForm
     private readonly TextBox search = new() { Dock = DockStyle.Fill, PlaceholderText = "タイトルまたは実行ファイル名", AccessibleName = "検索" };
     private readonly ComboBox targets = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "対象ウィンドウ", DropDownWidth = 800 };
     private readonly Button refresh = new() { Text = "更新", AutoSize = true };
-    private readonly CheckBox sync = new() { Text = "同期", Checked = true, AutoSize = true };
+    private readonly CheckBox autoRead = new() { Text = "自動読み取り", Checked = true, AutoSize = true };
+    private readonly CheckBox autoApply = new() { Text = "自動反映", Checked = true, AutoSize = true };
     private readonly CheckBox allowOutside = new() { Text = "画面外可", AutoSize = true };
     private readonly CheckBox maximize = new() { Text = "最大化", Appearance = Appearance.Button, AutoSize = true };
     private readonly CheckBox alwaysOnTop = new() { Text = "最前面", Checked = true, AutoSize = true };
@@ -57,13 +58,19 @@ public sealed class MainForm : BrandedForm
         refresh.Click += (_, _) => RefreshTargets();
         targets.SelectedIndexChanged += (_, _) => { if (!reading) SelectTarget(); };
         alwaysOnTop.CheckedChanged += (_, _) => TopMost = alwaysOnTop.Checked;
-        sync.CheckedChanged += (_, _) =>
+        autoRead.CheckedChanged += (_, _) => RefreshState(false);
+        autoApply.CheckedChanged += (_, _) =>
         {
             editDelay.Stop();
-            if (sync.Checked) { dirty = false; RefreshState(true); }
+            if (autoApply.Checked && dirty) editDelay.Start();
             UpdateControls();
         };
-        allowOutside.CheckedChanged += async (_, _) => { if (!reading) { lastConstraintAttempt = null; await ApplyAsync(); } };
+        allowOutside.CheckedChanged += async (_, _) =>
+        {
+            if (reading) return;
+            lastConstraintAttempt = null;
+            if (autoApply.Checked) await ApplyAsync();
+        };
         maximize.CheckedChanged += async (_, _) => { if (!reading) await MaximizeAsync(); };
         apply.Click += async (_, _) => await ApplyAsync();
         undo.Click += async (_, _) => await UndoAsync();
@@ -73,17 +80,17 @@ public sealed class MainForm : BrandedForm
             {
                 if (reading || busy) return;
                 dirty = true;
-                if (sync.Checked) { editDelay.Stop(); editDelay.Start(); }
+                if (autoApply.Checked) { editDelay.Stop(); editDelay.Start(); }
             };
             number.KeyDown += async (_, e) =>
             {
                 if (e.KeyCode != Keys.Enter) return;
                 e.SuppressKeyPress = true;
                 ValidateChildren();
-                await ApplyAsync();
+                if (autoApply.Checked) await ApplyAsync();
             };
         }
-        editDelay.Tick += async (_, _) => { editDelay.Stop(); await ApplyAsync(); };
+        editDelay.Tick += async (_, _) => { editDelay.Stop(); if (autoApply.Checked) await ApplyAsync(); };
         poll.Tick += (_, _) => RefreshState(false);
         previewArea.Resize += (_, _) => UpdatePreview();
         Resize += (_, _) => UpdatePreview();
@@ -106,21 +113,30 @@ public sealed class MainForm : BrandedForm
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
+        alwaysOnTop.Anchor = AnchorStyles.Left;
         searchRow.Controls.Add(Caption("検索"), 0, 0); searchRow.Controls.Add(search, 1, 0); searchRow.Controls.Add(alwaysOnTop, 2, 0);
         var targetRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
         targetRow.Controls.Add(Caption("対象"), 0, 0); targetRow.Controls.Add(targets, 1, 0); targetRow.Controls.Add(refresh, 2, 0);
-        var options = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        options.Controls.AddRange([maximize, sync, allowOutside, apply, undo]);
-        var geometry = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 8 };
+        var options = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1 };
+        options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        Control[] actions = [maximize, autoRead, autoApply, apply, allowOutside, undo];
+        for (var i = 0; i < actions.Length; i++)
+        {
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            actions[i].Anchor = AnchorStyles.Left;
+            options.Controls.Add(actions[i], i, 0);
+        }
+        var geometry = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 8, RowCount = 1 };
+        geometry.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         for (var i = 0; i < 4; i++)
         {
             geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28));
             geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
             geometry.Controls.Add(Caption(new[] { "X", "Y", "W", "H" }[i]), i * 2, 0);
-            numbers[i].Dock = DockStyle.Fill;
+            numbers[i].Anchor = AnchorStyles.Left | AnchorStyles.Right;
             geometry.Controls.Add(numbers[i], i * 2 + 1, 0);
         }
         previewArea.Controls.Add(previewMessage);
@@ -189,7 +205,7 @@ public sealed class MainForm : BrandedForm
             if (state is null) { ClearTarget("対象が終了しました。一覧を更新してください。"); return; }
             var dragging = windows.IsLeftButtonDown;
             current = state;
-            if (!state.IsMaximized && !state.IsMinimized && !allowOutside.Checked && !dragging && !dirty)
+            if (autoApply.Checked && !state.IsMaximized && !state.IsMinimized && !allowOutside.Checked && !dragging && !dirty)
             {
                 var workArea = windows.GetWorkArea(state.Target);
                 if (lastConstraintAttempt is { } attempted && attempted != (state.Bounds, workArea))
@@ -203,7 +219,7 @@ public sealed class MainForm : BrandedForm
                 }
             }
             history.Observe(state, dragging);
-            if (force || (!dirty && !numbers.Any(x => x.ContainsFocus))) WriteState(state);
+            if (force || (autoRead.Checked && !dirty && !numbers.Any(x => x.ContainsFocus))) WriteState(state);
             else WriteMaximized(state);
             UpdateControls();
             UpdatePreview();
@@ -219,6 +235,7 @@ public sealed class MainForm : BrandedForm
             var values = new[] { state.Bounds.X, state.Bounds.Y, state.Bounds.Width, state.Bounds.Height };
             for (var i = 0; i < 4; i++) numbers[i].Value = Math.Clamp(values[i], numbers[i].Minimum, numbers[i].Maximum);
             maximize.Checked = state.IsMaximized;
+            maximize.Text = state.IsMaximized ? "通常化" : "最大化";
         }
         finally { reading = false; }
     }
@@ -226,7 +243,11 @@ public sealed class MainForm : BrandedForm
     private void WriteMaximized(WindowState state)
     {
         reading = true;
-        try { maximize.Checked = state.IsMaximized; }
+        try
+        {
+            maximize.Checked = state.IsMaximized;
+            maximize.Text = state.IsMaximized ? "通常化" : "最大化";
+        }
         finally { reading = false; }
     }
 
@@ -246,7 +267,7 @@ public sealed class MainForm : BrandedForm
             var desired = WindowGeometry.Constrain(requested, windows.GetWorkArea(before.Target), allowOutside.Checked);
             windows.ApplyBounds(before.Target, desired);
             return state => state.Bounds == desired || state.Bounds != before.Bounds;
-        }, observeBefore: !autoConstrain);
+        }, observeBefore: !autoConstrain, readGeometry: !autoConstrain || autoRead.Checked);
     }
 
     private async Task MaximizeAsync()
@@ -272,7 +293,7 @@ public sealed class MainForm : BrandedForm
         }, isUndo: true);
     }
 
-    private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true)
+    private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true, bool readGeometry = true)
     {
         if (busy || selected is null) return;
         editDelay.Stop();
@@ -299,7 +320,7 @@ public sealed class MainForm : BrandedForm
             if (isUndo) history.AcceptUndo(actual); else history.Observe(actual);
             current = actual;
             dirty = false;
-            WriteState(actual);
+            if (readGeometry) WriteState(actual); else WriteMaximized(actual);
             SetStatus(message);
         }
         catch (Exception ex)
@@ -319,11 +340,12 @@ public sealed class MainForm : BrandedForm
         var exists = current is not null;
         var editable = exists && !busy && !current!.IsMaximized && !current.IsMinimized;
         foreach (var number in numbers) number.Enabled = editable;
-        apply.Enabled = editable && !sync.Checked;
+        apply.Enabled = editable && !autoApply.Checked;
         undo.Enabled = exists && !busy && history.Count > 0;
         undo.Text = history.Count == 0 ? "戻す" : $"戻す ({history.Count})";
         maximize.Enabled = exists && !busy && !current!.IsMinimized && (current.CanMaximize || current.IsMaximized);
-        sync.Enabled = exists && !busy;
+        autoRead.Enabled = exists && !busy;
+        autoApply.Enabled = exists && !busy;
         allowOutside.Enabled = exists && !busy;
         targets.Enabled = !busy;
         refresh.Enabled = !busy;
@@ -352,7 +374,7 @@ public sealed class MainForm : BrandedForm
         history.Select(null);
         preview.Clear();
         reading = true;
-        try { targets.SelectedIndex = -1; maximize.Checked = false; }
+        try { targets.SelectedIndex = -1; maximize.Checked = false; maximize.Text = "最大化"; }
         finally { reading = false; }
         UpdateControls(); UpdatePreview(); SetStatus(message);
     }
