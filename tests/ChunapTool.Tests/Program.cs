@@ -5,13 +5,16 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--capture-smoke") return WgcSmokeTests.Run(args[1]);
         if (args.SequenceEqual(new[] { "--native" })) return NativeTests.Run();
         if (args.SequenceEqual(new[] { "--ui" }))
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            return UiTests.Run();
+            int ui = UiTests.Run();
+            int thumbnails = ThumbnailTests.Run();
+            return ui == 0 && thumbnails == 0 ? 0 : 1;
         }
         if (args.Contains("--fixture", StringComparer.Ordinal))
         {

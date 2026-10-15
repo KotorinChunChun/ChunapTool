@@ -1,5 +1,6 @@
 using ChunapTool.Core;
 using ChunapTool.Native;
+using ChunapTool.Thumbnails;
 using System.Diagnostics;
 
 namespace ChunapTool;
@@ -17,6 +18,8 @@ public sealed class MainForm : BrandedForm
     private TableLayoutPanel layout = null!;
     private readonly Button targetPickerButton = new() { Text = "⌖", AutoSize = true, AccessibleName = "対象をドラッグして選択", Width = 38 };
     private readonly Button previewToggle = new() { Text = "▼", AutoSize = true, AccessibleName = "プレビューを表示", Width = 32 };
+    private readonly Button thumbnailSelect = new() { Text = "サムネイル選択", AutoSize = true, Anchor = AnchorStyles.Left };
+    private ThumbnailPickerForm? thumbnailPicker;
     private readonly WindowHistory history = new();
     private readonly DwmPreview preview = new();
     private readonly TextBox search = new() { Dock = DockStyle.Fill, PlaceholderText = "タイトルまたは実行ファイル名", AccessibleName = "検索" };
@@ -41,7 +44,8 @@ public sealed class MainForm : BrandedForm
     private readonly System.Windows.Forms.Timer filterDelay = new() { Interval = 250 };
     private readonly System.Windows.Forms.Timer editDelay = new() { Interval = 250 };
     private bool reading, busy, dirty;
-    internal string? ManagementStopBlockReason => busy || picking ? "ウィンドウ操作中のため停止できません。" : null;
+    internal string? ManagementStopBlockReason => busy || picking || thumbnailPicker is { IsDisposed: false }
+        ? "ウィンドウ操作中のため停止できません。" : null;
     private WindowEntry? selected;
     private WindowState? current;
     private bool previewFailed;
@@ -67,6 +71,7 @@ public sealed class MainForm : BrandedForm
         filterDelay.Tick += (_, _) => { filterDelay.Stop(); RefreshTargets(); };
         refresh.Click += (_, _) => RefreshTargets();
         previewToggle.Click += (_, _) => TogglePreview();
+        thumbnailSelect.Click += (_, _) => OpenThumbnailPicker();
         targetPickerButton.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) BeginTargetPick(); };
         targetPickerButton.MouseMove += (_, _) => { if (picking) UpdateTargetPick(Cursor.Position); };
         targetPickerButton.MouseUp += (_, e) =>
@@ -132,12 +137,14 @@ public sealed class MainForm : BrandedForm
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
+        var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 148));
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
         alwaysOnTop.Anchor = AnchorStyles.Left;
-        searchRow.Controls.Add(Caption("検索"), 0, 0); searchRow.Controls.Add(search, 1, 0); searchRow.Controls.Add(alwaysOnTop, 2, 0);
+        searchRow.Controls.Add(Caption("検索"), 0, 0); searchRow.Controls.Add(search, 1, 0);
+        searchRow.Controls.Add(thumbnailSelect, 2, 0); searchRow.Controls.Add(alwaysOnTop, 3, 0);
         var targetRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -245,7 +252,7 @@ public sealed class MainForm : BrandedForm
 
     private void RefreshState(bool force)
     {
-        if (busy || picking || selected is null) return;
+        if (busy || picking || thumbnailPicker is { IsDisposed: false } || selected is null) return;
         try
         {
             var state = windows.GetState(selected.Identity);
@@ -398,6 +405,7 @@ public sealed class MainForm : BrandedForm
         refresh.Enabled = !busy;
         search.Enabled = !busy;
         targetPickerButton.Enabled = !busy;
+        thumbnailSelect.Enabled = !busy && !picking && thumbnailPicker is null;
     }
 
     private void UpdatePreview()
@@ -441,7 +449,7 @@ public sealed class MainForm : BrandedForm
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { EndTargetPick(false); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); }
+        if (disposing) { EndTargetPick(false); thumbnailPicker?.Dispose(); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -524,5 +532,31 @@ public sealed class MainForm : BrandedForm
         }
         finally { ResumeLayout(true); }
         UpdatePreview();
+    }
+
+    private void OpenThumbnailPicker()
+    {
+        if (busy || picking || thumbnailPicker is not null) return;
+        editDelay.Stop();
+        try
+        {
+            using var picker = new ThumbnailPickerForm(windows, new WgcThumbnailCapture(), selected?.Identity, search.Text, passive);
+            thumbnailPicker = picker;
+            UpdateControls();
+            picker.Bounds = Screen.FromControl(this).WorkingArea;
+            picker.WindowState = FormWindowState.Maximized;
+            if (picker.ShowDialog(this) == DialogResult.OK && picker.SelectedEntry is { } entry) ChooseTarget(entry);
+        }
+        catch (Exception ex) { SetStatus($"サムネイル一覧を開けません: {ex.Message}", true); }
+        finally
+        {
+            thumbnailPicker = null;
+            if (!IsDisposed)
+            {
+                UpdateControls();
+                RefreshState(false);
+                if (dirty && autoApply.Checked) editDelay.Start();
+            }
+        }
     }
 }
