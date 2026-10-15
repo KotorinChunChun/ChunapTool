@@ -158,6 +158,12 @@ internal static class ThumbnailTests
         Equal(2, screen.Grid.Controls.Count);
         Equal(0, screen.Capture.Calls.Count);
         Equal(WindowTitle.Create("サムネイルから対象を選択"), screen.Form.Text);
+        Equal(2, screen.Grid.ColumnCount);
+        True(screen.Grid.Controls[0].Height > 400);
+        for (uint id = 3; id <= 8; id++)
+            screen.Windows.Entries.Add(new WindowEntry(new WindowIdentity(0, id), $"候補ウィンドウ {id}", "test.exe"));
+        screen.Invoke("RefreshEntries");
+        Equal(8, screen.Grid.Controls.Count);
         var cards = screen.Grid.Controls.Cast<ThumbnailCard>().ToArray();
         Equal(First.Title, cards[0].AccessibleName);
         True(cards[0].IsCurrent);
@@ -171,7 +177,7 @@ internal static class ThumbnailTests
         screen.Search.Text = "BETA";
         Equal(1, screen.Grid.Controls.Count);
         Equal(Second.Identity, ((ThumbnailCard)screen.Grid.Controls[0]).Tile.Entry.Identity);
-        Equal(1, screen.Windows.Enumerations);
+        Equal(2, screen.Windows.Enumerations);
         screen.Search.Text = "なし";
         Equal(0, screen.Grid.Controls.Count);
         True(screen.Field<Label>("count").Text.Contains("ありません", StringComparison.Ordinal));
@@ -181,8 +187,7 @@ internal static class ThumbnailTests
         {
             screen.Form.ClientSize = new Size(1000, 680);
             screen.Search.Clear();
-            Await((Task)screen.Invoke("RefreshOneAsync")!);
-            Await((Task)screen.Invoke("RefreshOneAsync")!);
+            for (int i = 0; i < screen.Grid.Controls.Count; i++) Await((Task)screen.Invoke("RefreshOneAsync")!);
             using var render = new Bitmap(screen.Form.Width, screen.Form.Height);
             screen.Form.DrawToBitmap(render, new Rectangle(Point.Empty, render.Size));
             Directory.CreateDirectory(output);
@@ -289,17 +294,26 @@ internal static class ThumbnailTests
             {
                 if (Fail) throw new InvalidOperationException("検証用失敗");
                 if (Block) return await pending.Task;
-                return new ThumbnailCaptureResult(new Bitmap(8, 6), "");
+                return new ThumbnailCaptureResult(CreateImage(), "");
             }
             finally { concurrent--; }
         }
         internal Bitmap Complete()
         {
-            var bitmap = new Bitmap(8, 6);
+            var bitmap = CreateImage();
             pending.SetResult(new ThumbnailCaptureResult(bitmap, ""));
             return bitmap;
         }
         public void Dispose() => Disposed = true;
+        private static Bitmap CreateImage()
+        {
+            var image = new Bitmap(80, 50);
+            using var graphics = Graphics.FromImage(image);
+            graphics.Clear(Color.RoyalBlue);
+            using var green = new SolidBrush(Color.SeaGreen);
+            graphics.FillRectangle(green, 40, 0, 40, 50);
+            return image;
+        }
     }
 
     private sealed class FakeWindows : IWindowService

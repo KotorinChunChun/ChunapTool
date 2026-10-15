@@ -105,13 +105,18 @@ internal sealed class ThumbnailPickerForm : BrandedForm
     {
         if (stopped || viewport.ClientSize.Width < 1) return;
         int width = Math.Max(1, viewport.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - grid.Padding.Horizontal);
-        int columns = Math.Max(1, width / (220 * DeviceDpi / 96));
-        int cardHeight = 190 * DeviceDpi / 96;
+        int availableHeight = Math.Max(1, viewport.ClientSize.Height - grid.Padding.Vertical);
+        int count = Math.Max(1, grid.Controls.Count);
+        int maximumColumns = Math.Max(1, width / (220 * DeviceDpi / 96));
+        int columns = Math.Min(Math.Min(maximumColumns, count),
+            Math.Max(1, (int)Math.Ceiling(Math.Sqrt((double)count * width / (availableHeight * 1.4)))));
+        int rows = Math.Max(1, (grid.Controls.Count + columns - 1) / columns);
+        int cardHeight = Math.Max(190 * DeviceDpi / 96, availableHeight / rows);
         grid.SuspendLayout();
         try
         {
             grid.ColumnCount = columns;
-            grid.RowCount = Math.Max(1, (grid.Controls.Count + columns - 1) / columns);
+            grid.RowCount = rows;
             grid.ColumnStyles.Clear(); grid.RowStyles.Clear();
             for (int i = 0; i < columns; i++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / columns));
             for (int i = 0; i < grid.RowCount; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, cardHeight));
