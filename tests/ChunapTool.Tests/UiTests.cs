@@ -19,6 +19,8 @@ public static class UiTests
             ("ドラッグのマウスイベントと終了した候補の選択を処理", DragEventsAndClosedCandidate),
             ("自動読み取りと自動反映の4組合せを独立制御", IndependentAutomation),
             ("自動反映OFFではEnterと画面外設定で適用しない", ManualApplyOnly),
+            ("位置サイズ反映中もEnterとTabの入力先を維持", GeometryInputFocus),
+            ("反映待機中の次の入力を保持して順次反映", PreserveEditsDuringApply),
             ("自動反映OFFで待機中の反映を取消しONで再開", ToggleAutomaticApply),
             ("自動読み取りOFFでも対象終了と最大化を検出", ObserveSafetyWithoutAutomaticRead),
             ("自動読み取りOFFでは自動画面内補正後も入力欄を保持", ConstrainWithoutAutomaticRead),
@@ -235,6 +237,69 @@ public static class UiTests
         screen.Control<Button>("apply").PerformClick();
         screen.AwaitIdle();
         Equal(0, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "手動適用時に画面内へ制限");
+    }
+
+    private static void GeometryInputFocus()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        for (int index = 0; index < screen.Numbers.Length; index++)
+        {
+            var number = screen.Numbers[index];
+            // 非アクティブフォームの論理的な入力先のみを設定する。実キーは送信しない。
+            True(!screen.Form.ContainsFocus, "他の開発画面からフォーカスを奪わない");
+            screen.Form.ActiveControl = number;
+            number.Value += 10;
+            screen.RaiseEnter(number);
+            True(screen.Control<bool>("busy"), "Enterから反映処理を開始");
+            True(screen.Numbers.All(control => control.Enabled), "安定確認中も座標欄を有効に保つ");
+            Equal<Control>(number, screen.Form.ActiveControl!, "Enter後も同じ入力先");
+            var next = index < 3 ? screen.Numbers[index + 1] : screen.Numbers[index - 1];
+            True(screen.Form.SelectNextControl(number, index < 3, true, true, false), "確認中にTabまたはShift+Tab移動できる");
+            Equal<Control>(next, screen.Form.ActiveControl!, "X/Y/W/Hの順に移動");
+            screen.AwaitIdle();
+            Equal<Control>(next, screen.Form.ActiveControl!, "反映後も移動先を維持");
+            True(!screen.Form.ContainsFocus, "論理入力先の確認後もフォームは非アクティブ");
+        }
+
+        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.ActiveControl = screen.Numbers[0];
+        screen.Numbers[0].Value += 10;
+        screen.Await(screen.InvokeTask("ApplyAsync"));
+        Equal<Control>(screen.Numbers[0], screen.Form.ActiveControl!, "手動適用でも入力先を維持");
+        screen.Service.RejectApplyBounds = true;
+        screen.Numbers[0].Value += 10;
+        screen.Await(screen.InvokeTask("ApplyAsync"));
+        Equal<Control>(screen.Numbers[0], screen.Form.ActiveControl!, "適用失敗時も入力先を維持");
+        True(screen.Numbers.All(control => control.Enabled), "失敗後も入力可能");
+    }
+
+    private static void PreserveEditsDuringApply()
+    {
+        foreach (bool automatic in new[] { false, true })
+        {
+            using var screen = new TestScreen();
+            screen.Select(0);
+            screen.Control<CheckBox>("autoApply").Checked = automatic;
+            screen.Numbers[0].Value = 250;
+            True(SynchronizationContext.Current is WindowsFormsSynchronizationContext, "反映継続はUI同期コンテキストで実行");
+            var firstApply = screen.InvokeTask("ApplyAsync");
+            True(screen.Control<bool>("busy"), "最初の反映は安定確認中");
+            screen.Numbers[1].Value = 150;
+            screen.Numbers[2].Text = "650";
+            screen.Await(firstApply);
+            Equal(150m, screen.Numbers[1].Value, "確認中に変更した次の値を保持");
+            Equal("650", screen.Numbers[2].Text, "確認中の未確定文字列を保持");
+            Equal(1, screen.Service.Mutations, "確認中に別の位置変更を並列送信しない");
+            if (automatic) screen.AwaitMutations(2);
+            else
+            {
+                screen.PumpFor(350);
+                Equal(1, screen.Service.Mutations, "手動設定では確認中の編集も自動反映しない");
+                screen.Await(screen.InvokeTask("ApplyAsync"));
+            }
+            Equal(new WindowBounds(250, 150, 650, 340), screen.Service.GetState(FakeWindows.First)!.Bounds, "続けて入力した値を欠落させず反映");
+        }
     }
 
     private static void ToggleAutomaticApply()
@@ -610,14 +675,14 @@ public static class UiTests
             method.Invoke(control, [new KeyEventArgs(Keys.Enter)]);
         }
 
-        private static void PumpUntil(Func<bool> completed)
+        private void PumpUntil(Func<bool> completed)
         {
             var watch = Stopwatch.StartNew();
             while (!completed())
             {
                 if (watch.ElapsedMilliseconds > 4000)
                 {
-                    throw new TimeoutException("画面処理の完了を4秒待っても応答がありません。");
+                    throw new TimeoutException($"画面処理の完了を4秒待っても応答がありません。反映={Service.Mutations}, busy={Control<bool>("busy")}, dirty={Control<bool>("dirty")}, タイマー={Control<System.Windows.Forms.Timer>("editDelay").Enabled}, 状態={Control<Label>("status").Text}");
                 }
 
                 Application.DoEvents();

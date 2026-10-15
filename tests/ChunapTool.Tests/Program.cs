@@ -12,9 +12,25 @@ internal static class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            int ui = UiTests.Run();
-            int thumbnails = ThumbnailTests.Run();
-            return ui == 0 && thumbnails == 0 ? 0 : 1;
+            // 実アプリと同じUIメッセージループでawait後のタイマー再開も検証する。
+            // メインフォームを設けず、各テストは不可視・非アクティブなままとする。
+            using var context = new ApplicationContext();
+            int result = 1;
+            EventHandler? runTests = null;
+            runTests = (_, _) =>
+            {
+                Application.Idle -= runTests;
+                try
+                {
+                    int ui = UiTests.Run();
+                    int thumbnails = ThumbnailTests.Run();
+                    result = ui == 0 && thumbnails == 0 ? 0 : 1;
+                }
+                finally { context.ExitThread(); }
+            };
+            Application.Idle += runTests;
+            Application.Run(context);
+            return result;
         }
         if (args.Contains("--fixture", StringComparer.Ordinal))
         {

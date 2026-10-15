@@ -22,6 +22,7 @@ public sealed class MainForm : BrandedForm
     private ThumbnailPickerForm? thumbnailPicker;
     private readonly WindowHistory history = new();
     private readonly DwmPreview preview = new();
+    private readonly ToolTip tooltip = new() { ShowAlways = true, InitialDelay = 500, ReshowDelay = 100, AutoPopDelay = 10000 };
     private readonly TextBox search = new() { Dock = DockStyle.Fill, PlaceholderText = "タイトルまたは実行ファイル名", AccessibleName = "検索" };
     private readonly ComboBox targets = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "対象ウィンドウ", DropDownWidth = 800 };
     private readonly Button refresh = new() { Text = "更新", AutoSize = true };
@@ -44,6 +45,8 @@ public sealed class MainForm : BrandedForm
     private readonly System.Windows.Forms.Timer filterDelay = new() { Interval = 250 };
     private readonly System.Windows.Forms.Timer editDelay = new() { Interval = 250 };
     private bool reading, busy, dirty;
+    private bool geometryEditableWhileBusy;
+    private long editRevision;
     internal string? ManagementStopBlockReason => busy || picking || thumbnailPicker is { IsDisposed: false }
         ? "ウィンドウ操作中のため停止できません。" : null;
     private WindowEntry? selected;
@@ -67,6 +70,7 @@ public sealed class MainForm : BrandedForm
         TopMost = !passive;
         if (passive) { Opacity = 0; ShowInTaskbar = false; }
         BuildLayout();
+        ConfigureTooltips();
         search.TextChanged += (_, _) => ApplyTargetFilter();
         filterDelay.Tick += (_, _) => { filterDelay.Stop(); RefreshTargets(); };
         refresh.Click += (_, _) => RefreshTargets();
@@ -106,9 +110,17 @@ public sealed class MainForm : BrandedForm
         {
             number.ValueChanged += (_, _) =>
             {
-                if (reading || busy) return;
+                if (reading || (busy && !geometryEditableWhileBusy)) return;
                 dirty = true;
-                if (autoApply.Checked) { editDelay.Stop(); editDelay.Start(); }
+                editRevision++;
+                if (autoApply.Checked && !busy) { editDelay.Stop(); editDelay.Start(); }
+            };
+            number.TextChanged += (_, _) =>
+            {
+                // 安定確認中に次の欄へ入力した未確定の文字列も上書きしない。
+                if (reading || !busy || !geometryEditableWhileBusy) return;
+                dirty = true;
+                editRevision++;
             };
             number.KeyDown += async (_, e) =>
             {
@@ -127,6 +139,33 @@ public sealed class MainForm : BrandedForm
         UpdateControls();
         SetStatus("対象を選ぶと、位置・サイズを調整できます。");
     }
+
+    private void ConfigureTooltips()
+    {
+        tooltip.SetToolTip(refresh, "対象ウィンドウの候補一覧を再取得します。");
+        tooltip.SetToolTip(targetPickerButton, "左ボタンを押したまま対象ウィンドウへドラッグし、離して選択します。\nEscで取り消します。");
+        tooltip.SetToolTip(thumbnailSelect, "ウィンドウの撮影画像から操作対象を選びます。\n選択画面を閉じると撮影を停止します。");
+        tooltip.SetToolTip(autoRead, "対象の位置・サイズの変化を入力欄へ読み取ります。\n編集中・未適用の値は保持します。");
+        tooltip.SetToolTip(autoApply, "位置・サイズの編集を自動で反映します。\nOFFでは「適用」を押すまで反映しません。");
+        tooltip.SetToolTip(allowOutside, "モニターの作業領域外への移動・サイズ指定を許可します。\nOFFでは反映時に作業領域（タスクバーを除く）へ収めます。");
+        tooltip.SetToolTip(alwaysOnTop, "ChunapToolを他のウィンドウより手前に表示します。");
+        tooltip.SetToolTip(apply, "入力した位置・サイズを対象へ反映します。\n「自動反映」がOFFのときに使用できます。");
+        tooltip.SetToolTip(undo, "対象の位置・サイズ・最大化状態を一つ前へ戻します。\n最大100手。対象を切り替えると履歴をリセットします。");
+        UpdateMaximizeTooltip(false);
+        UpdatePreviewTooltip();
+    }
+
+    private void UpdateMaximizeTooltip(bool isMaximized)
+    {
+        var text = isMaximized
+            ? "対象ウィンドウを通常表示に戻します。"
+            : "対象ウィンドウを最大化します。";
+        if (tooltip.GetToolTip(maximize) != text) tooltip.SetToolTip(maximize, text);
+    }
+
+    private void UpdatePreviewTooltip() => tooltip.SetToolTip(previewToggle, previewExpanded
+        ? "プレビューを折りたたみ、プレビュー処理を停止します。"
+        : "対象ウィンドウのプレビューを展開します。");
 
     private void BuildLayout()
     {
@@ -290,6 +329,7 @@ public sealed class MainForm : BrandedForm
             for (var i = 0; i < 4; i++) numbers[i].Value = Math.Clamp(values[i], numbers[i].Minimum, numbers[i].Maximum);
             maximize.Checked = state.IsMaximized;
             maximize.Text = state.IsMaximized ? "通常化" : "最大化";
+            UpdateMaximizeTooltip(state.IsMaximized);
         }
         finally { reading = false; }
     }
@@ -301,6 +341,7 @@ public sealed class MainForm : BrandedForm
         {
             maximize.Checked = state.IsMaximized;
             maximize.Text = state.IsMaximized ? "通常化" : "最大化";
+            UpdateMaximizeTooltip(state.IsMaximized);
         }
         finally { reading = false; }
     }
@@ -321,7 +362,7 @@ public sealed class MainForm : BrandedForm
             var desired = WindowGeometry.Constrain(requested, windows.GetWorkArea(before.Target), allowOutside.Checked);
             windows.ApplyBounds(before.Target, desired);
             return state => state.Bounds == desired || state.Bounds != before.Bounds;
-        }, observeBefore: !autoConstrain, readGeometry: !autoConstrain || autoRead.Checked);
+        }, observeBefore: !autoConstrain, readGeometry: !autoConstrain || autoRead.Checked, keepGeometryEditable: true);
     }
 
     private async Task MaximizeAsync()
@@ -347,11 +388,13 @@ public sealed class MainForm : BrandedForm
         }, isUndo: true);
     }
 
-    private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true, bool readGeometry = true)
+    private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true, bool readGeometry = true, bool keepGeometryEditable = false)
     {
         if (busy || selected is null) return;
         editDelay.Stop();
         busy = true;
+        geometryEditableWhileBusy = keepGeometryEditable;
+        var revision = editRevision;
         UpdateControls();
         try
         {
@@ -373,8 +416,9 @@ public sealed class MainForm : BrandedForm
             if (actual is null || !completed(actual)) throw new InvalidOperationException("対象が変更に応答しませんでした。権限または対象アプリの制限を確認してください。");
             if (isUndo) history.AcceptUndo(actual); else history.Observe(actual);
             current = actual;
-            dirty = false;
-            if (readGeometry) WriteState(actual); else WriteMaximized(actual);
+            var hasPendingEdits = editRevision != revision;
+            if (!hasPendingEdits) dirty = false;
+            if (readGeometry && !hasPendingEdits) WriteState(actual); else WriteMaximized(actual);
             SetStatus(message);
         }
         catch (Exception ex)
@@ -385,7 +429,13 @@ public sealed class MainForm : BrandedForm
         finally
         {
             busy = false;
-            if (!IsDisposed) { UpdateControls(); UpdatePreview(); }
+            geometryEditableWhileBusy = false;
+            if (!IsDisposed)
+            {
+                UpdateControls();
+                UpdatePreview();
+                if (editRevision != revision && dirty && autoApply.Checked) editDelay.Start();
+            }
         }
     }
 
@@ -394,7 +444,10 @@ public sealed class MainForm : BrandedForm
         var exists = current is not null;
         var available = !busy && !picking && thumbnailPicker is null;
         var editable = exists && available && !current!.IsMaximized && !current.IsMinimized;
-        foreach (var number in numbers) number.Enabled = editable;
+        // 座標反映だけでは入力欄を無効化しない。Tab移動とEnter後のフォーカスを維持する。
+        var geometryEditable = exists && (!busy || geometryEditableWhileBusy) && !picking && thumbnailPicker is null
+            && !current!.IsMaximized && !current.IsMinimized;
+        foreach (var number in numbers) number.Enabled = geometryEditable;
         apply.Enabled = editable && !autoApply.Checked;
         undo.Enabled = exists && available && history.Count > 0;
         undo.Text = history.Count == 0 ? "戻す" : $"戻す ({history.Count})";
@@ -450,7 +503,7 @@ public sealed class MainForm : BrandedForm
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { EndTargetPick(false); thumbnailPicker?.Dispose(); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); }
+        if (disposing) { EndTargetPick(false); thumbnailPicker?.Dispose(); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); tooltip.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -532,6 +585,7 @@ public sealed class MainForm : BrandedForm
             }
             previewToggle.Text = previewExpanded ? "▲" : "▼";
             previewToggle.AccessibleName = previewExpanded ? "プレビューを非表示" : "プレビューを表示";
+            UpdatePreviewTooltip();
         }
         finally { ResumeLayout(true); }
         UpdatePreview();

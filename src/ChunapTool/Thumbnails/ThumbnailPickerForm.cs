@@ -16,7 +16,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
     private readonly TableLayoutPanel grid = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
     private readonly System.Windows.Forms.Timer captureTimer = new() { Interval = 100 };
     private readonly System.Windows.Forms.Timer catalogTimer = new() { Interval = 2000 };
-    private readonly ToolTip tooltip = new();
+    private readonly ToolTip tooltip = new() { ShowAlways = true, InitialDelay = 500, ReshowDelay = 100, AutoPopDelay = 10000 };
     private IReadOnlyList<ThumbnailTile> filtered = [];
     private Task? refreshTask;
     private bool stopped;
@@ -51,6 +51,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         layout.Controls.Add(top, 0, 0); layout.Controls.Add(count, 0, 1); layout.Controls.Add(viewport, 0, 2);
         Controls.Add(layout);
         CancelButton = close;
+        tooltip.SetToolTip(close, "対象を変更せずに選択画面を閉じ、撮影を停止します。\nEscでも閉じられます。");
         close.Click += (_, _) => Close();
         search.Text = filter;
         search.TextChanged += (_, _) => ApplyFilter();
