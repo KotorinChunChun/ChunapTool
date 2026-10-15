@@ -57,7 +57,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         viewport.Resize += (_, _) => ArrangeCards();
         captureTimer.Tick += (_, _) => { if (refreshTask is null || refreshTask.IsCompleted) refreshTask = RefreshOneAsync(); };
         catalogTimer.Tick += (_, _) => RefreshEntries();
-        Shown += (_, _) => { RefreshEntries(); captureTimer.Start(); catalogTimer.Start(); search.Focus(); };
+        Shown += (_, _) => { RefreshEntries(); captureTimer.Start(); catalogTimer.Start(); if (!passive) search.Focus(); };
         FormClosed += (_, _) => Stop();
     }
 

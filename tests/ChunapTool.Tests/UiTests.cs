@@ -16,6 +16,7 @@ public static class UiTests
             ("プレビューは初期停止し開閉で領域と高さを復元", CollapsedPreview),
             ("検索は即時反映し0件でも現在対象と編集値を維持", ImmediateSearch),
             ("ターゲットドラッグの確定と取消は対象を安全に選択", DragTargetSelection),
+            ("ドラッグのマウスイベントと終了した候補の選択を処理", DragEventsAndClosedCandidate),
             ("自動読み取りと自動反映の4組合せを独立制御", IndependentAutomation),
             ("自動反映OFFではEnterと画面外設定で適用しない", ManualApplyOnly),
             ("自動反映OFFで待機中の反映を取消しONで再開", ToggleAutomaticApply),
@@ -125,6 +126,7 @@ public static class UiTests
         screen.Invoke("UpdateTargetPick", new Point(30, 40));
         Equal(FakeWindows.First, screen.Control<WindowEntry>("selected").Identity, "ドラッグ中は未確定");
         True(screen.Form.ManagementStopBlockReason is not null, "ドラッグ中は管理停止を拒否");
+        True(!screen.Targets.Enabled && screen.Numbers.All(number => !number.Enabled), "ドラッグ中は別の編集を停止");
         screen.Invoke("EndTargetPick", true);
         Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "離した時点で対象を確定");
         EqualValues([320, 180, 620, 410], screen.Numbers, "確定した対象の座標を表示");
@@ -148,6 +150,31 @@ public static class UiTests
             .Invoke(screen.Control<Button>("targetPickerButton"), [EventArgs.Empty]);
         True(!screen.Control<bool>("picking"), "キャプチャ喪失で解除");
         Equal(0, screen.Service.Mutations, "対象指定だけでは位置・サイズを変更しない");
+    }
+
+    private static void DragEventsAndClosedCandidate()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Picker.Next = screen.Service.Enumerate("")[1];
+        var button = screen.Control<Button>("targetPickerButton");
+        static void RaiseMouse(Control control, string name) => typeof(Control)
+            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(control, [new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0)]);
+        RaiseMouse(button, "OnMouseDown");
+        True(screen.Control<bool>("picking"), "マウス押下で開始");
+        RaiseMouse(button, "OnMouseMove");
+        RaiseMouse(button, "OnMouseUp");
+        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "マウス解放イベントで確定");
+        True(screen.Targets.Enabled && !screen.Control<bool>("picking"), "確定後に操作を復元");
+
+        var dead = screen.Service.Enumerate("")[0];
+        screen.Service.RemoveFirst();
+        screen.Targets.SelectedItem = dead;
+        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "終了した候補は現在対象を変えない");
+        Equal(FakeWindows.Second, ((WindowEntry)screen.Targets.SelectedItem!).Identity, "コンボも元の現在対象へ戻す");
+        Equal(0, screen.Service.Mutations, "選択では位置を変更しない");
     }
 
     private static void IndependentAutomation()

@@ -176,6 +176,18 @@ internal static class ThumbnailTests
         Equal(0, screen.Grid.Controls.Count);
         True(screen.Field<Label>("count").Text.Contains("ありません", StringComparison.Ordinal));
         Equal(0, screen.Capture.Calls.Count);
+        var output = Environment.GetEnvironmentVariable("CHUNAPTOOL_TEST_OUTPUT");
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            screen.Form.ClientSize = new Size(1000, 680);
+            screen.Search.Clear();
+            Await((Task)screen.Invoke("RefreshOneAsync")!);
+            Await((Task)screen.Invoke("RefreshOneAsync")!);
+            using var render = new Bitmap(screen.Form.Width, screen.Form.Height);
+            screen.Form.DrawToBitmap(render, new Rectangle(Point.Empty, render.Size));
+            Directory.CreateDirectory(output);
+            render.Save(Path.Combine(output, "thumbnail-picker-render.png"));
+        }
     }
 
     private static void PickerSelection()
@@ -197,7 +209,6 @@ internal static class ThumbnailTests
             screen.Invoke("SelectEntry", Second);
             True(screen.Form.SelectedEntry is null && !screen.Form.IsDisposed);
             Equal(1, screen.Grid.Controls.Count);
-            var message = Message.Create(screen.Form.Handle, 0x100, (nint)Keys.Escape, 0);
             typeof(Form).GetMethod("ProcessDialogKey", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(screen.Form, [Keys.Escape]);
             True(screen.Form.SelectedEntry is null);

@@ -233,7 +233,7 @@ public sealed class MainForm : BrandedForm
     private void ChooseTarget(WindowEntry next)
     {
         var state = windows.GetState(next.Identity);
-        if (state is null) { SetStatus("対象が終了しました。一覧を更新してください。", true); return; }
+        if (state is null) { ApplyTargetFilter(); SetStatus("対象が終了しました。一覧を更新してください。", true); return; }
         if (next?.Identity == selected?.Identity && next is not null) { selected = next; RefreshState(false); return; }
         editDelay.Stop();
         dirty = false;
@@ -392,20 +392,21 @@ public sealed class MainForm : BrandedForm
     private void UpdateControls()
     {
         var exists = current is not null;
-        var editable = exists && !busy && !current!.IsMaximized && !current.IsMinimized;
+        var available = !busy && !picking && thumbnailPicker is null;
+        var editable = exists && available && !current!.IsMaximized && !current.IsMinimized;
         foreach (var number in numbers) number.Enabled = editable;
         apply.Enabled = editable && !autoApply.Checked;
-        undo.Enabled = exists && !busy && history.Count > 0;
+        undo.Enabled = exists && available && history.Count > 0;
         undo.Text = history.Count == 0 ? "戻す" : $"戻す ({history.Count})";
-        maximize.Enabled = exists && !busy && !current!.IsMinimized && (current.CanMaximize || current.IsMaximized);
-        autoRead.Enabled = exists && !busy;
-        autoApply.Enabled = exists && !busy;
-        allowOutside.Enabled = exists && !busy;
-        targets.Enabled = !busy;
-        refresh.Enabled = !busy;
-        search.Enabled = !busy;
-        targetPickerButton.Enabled = !busy;
-        thumbnailSelect.Enabled = !busy && !picking && thumbnailPicker is null;
+        maximize.Enabled = exists && available && !current!.IsMinimized && (current.CanMaximize || current.IsMaximized);
+        autoRead.Enabled = exists && available;
+        autoApply.Enabled = exists && available;
+        allowOutside.Enabled = exists && available;
+        targets.Enabled = available;
+        refresh.Enabled = available;
+        search.Enabled = available;
+        targetPickerButton.Enabled = !busy && thumbnailPicker is null;
+        thumbnailSelect.Enabled = available;
     }
 
     private void UpdatePreview()
@@ -468,6 +469,7 @@ public sealed class MainForm : BrandedForm
         picking = true;
         pickedCandidate = null;
         editDelay.Stop();
+        UpdateControls();
         if (!passive) { targetPickerButton.Capture = true; Cursor = Cursors.Cross; }
         SetStatus("対象ウィンドウへドラッグして離してください。Escで取り消します。");
     }
@@ -493,6 +495,7 @@ public sealed class MainForm : BrandedForm
             catch (Exception ex) { SetStatus($"対象を選択できません: {ex.Message}", true); }
         }
         else SetStatus("対象選択を取り消しました。");
+        UpdateControls();
         if (dirty && autoApply.Checked && !IsDisposed) editDelay.Start();
     }
 
