@@ -8,6 +8,15 @@ public sealed class MainForm : BrandedForm
 {
     private readonly IWindowService windows;
     private readonly bool passive;
+    private readonly IWindowTargetPicker targetPicker;
+    private IReadOnlyList<WindowEntry> candidates = [];
+    private bool picking;
+    private WindowEntry? pickedCandidate;
+    private bool previewExpanded;
+    private int expandedPreviewHeight = 294;
+    private TableLayoutPanel layout = null!;
+    private readonly Button targetPickerButton = new() { Text = "⌖", AutoSize = true, AccessibleName = "対象をドラッグして選択", Width = 38 };
+    private readonly Button previewToggle = new() { Text = "▼", AutoSize = true, AccessibleName = "プレビューを表示", Width = 32 };
     private readonly WindowHistory history = new();
     private readonly DwmPreview preview = new();
     private readonly TextBox search = new() { Dock = DockStyle.Fill, PlaceholderText = "タイトルまたは実行ファイル名", AccessibleName = "検索" };
@@ -32,7 +41,7 @@ public sealed class MainForm : BrandedForm
     private readonly System.Windows.Forms.Timer filterDelay = new() { Interval = 250 };
     private readonly System.Windows.Forms.Timer editDelay = new() { Interval = 250 };
     private bool reading, busy, dirty;
-    internal string? ManagementStopBlockReason => busy ? "ウィンドウ操作中のため停止できません。" : null;
+    internal string? ManagementStopBlockReason => busy || picking ? "ウィンドウ操作中のため停止できません。" : null;
     private WindowEntry? selected;
     private WindowState? current;
     private bool previewFailed;
@@ -40,22 +49,36 @@ public sealed class MainForm : BrandedForm
 
     public MainForm() : this(new NativeWindowService()) { }
 
-    internal MainForm(IWindowService windowService, bool passive = false)
+    internal MainForm(IWindowService windowService, bool passive = false, IWindowTargetPicker? targetPicker = null)
     {
         windows = windowService;
         this.passive = passive;
+        this.targetPicker = targetPicker ?? new WindowTargetPicker();
         Text = WindowTitle.Create();
         Font = new Font("Yu Gothic UI", 10);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(820, 510);
-        MinimumSize = new Size(780, 420);
+        ClientSize = new Size(820, 216);
+        MinimumSize = new Size(780, 255);
         StartPosition = FormStartPosition.CenterScreen;
         TopMost = !passive;
         if (passive) { Opacity = 0; ShowInTaskbar = false; }
         BuildLayout();
-        search.TextChanged += (_, _) => { filterDelay.Stop(); filterDelay.Start(); };
+        search.TextChanged += (_, _) => ApplyTargetFilter();
         filterDelay.Tick += (_, _) => { filterDelay.Stop(); RefreshTargets(); };
         refresh.Click += (_, _) => RefreshTargets();
+        previewToggle.Click += (_, _) => TogglePreview();
+        targetPickerButton.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) BeginTargetPick(); };
+        targetPickerButton.MouseMove += (_, _) => { if (picking) UpdateTargetPick(Cursor.Position); };
+        targetPickerButton.MouseUp += (_, e) =>
+        {
+            if (!picking || e.Button != MouseButtons.Left) return;
+            UpdateTargetPick(Cursor.Position);
+            EndTargetPick(true);
+        };
+        targetPickerButton.MouseCaptureChanged += (_, _) =>
+        {
+            if (picking && !targetPickerButton.Capture) EndTargetPick(false);
+        };
         targets.SelectedIndexChanged += (_, _) => { if (!reading) SelectTarget(); };
         alwaysOnTop.CheckedChanged += (_, _) => TopMost = alwaysOnTop.Checked;
         autoRead.CheckedChanged += (_, _) => RefreshState(false);
@@ -102,12 +125,12 @@ public sealed class MainForm : BrandedForm
 
     private void BuildLayout()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 6 };
+        layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 6 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
@@ -115,11 +138,14 @@ public sealed class MainForm : BrandedForm
         searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
         alwaysOnTop.Anchor = AnchorStyles.Left;
         searchRow.Controls.Add(Caption("検索"), 0, 0); searchRow.Controls.Add(search, 1, 0); searchRow.Controls.Add(alwaysOnTop, 2, 0);
-        var targetRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
+        var targetRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
         targetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
-        targetRow.Controls.Add(Caption("対象"), 0, 0); targetRow.Controls.Add(targets, 1, 0); targetRow.Controls.Add(refresh, 2, 0);
+        targetPickerButton.Anchor = AnchorStyles.Left;
+        targetRow.Controls.Add(Caption("対象"), 0, 0); targetRow.Controls.Add(targets, 1, 0);
+        targetRow.Controls.Add(targetPickerButton, 2, 0); targetRow.Controls.Add(refresh, 3, 0);
         var options = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6, RowCount = 1 };
         options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Control[] actions = [maximize, autoRead, autoApply, apply, allowOutside, undo];
@@ -129,17 +155,21 @@ public sealed class MainForm : BrandedForm
             actions[i].Anchor = AnchorStyles.Left;
             options.Controls.Add(actions[i], i, 0);
         }
-        var geometry = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 8, RowCount = 1 };
+        var geometry = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 9, RowCount = 1 };
         geometry.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
+        previewToggle.Anchor = AnchorStyles.Left;
+        geometry.Controls.Add(previewToggle, 0, 0);
         for (var i = 0; i < 4; i++)
         {
             geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28));
             geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-            geometry.Controls.Add(Caption(new[] { "X", "Y", "W", "H" }[i]), i * 2, 0);
+            geometry.Controls.Add(Caption(new[] { "X", "Y", "W", "H" }[i]), i * 2 + 1, 0);
             numbers[i].Anchor = AnchorStyles.Left | AnchorStyles.Right;
-            geometry.Controls.Add(numbers[i], i * 2 + 1, 0);
+            geometry.Controls.Add(numbers[i], i * 2 + 2, 0);
         }
         previewArea.Controls.Add(previewMessage);
+        previewArea.Visible = false;
         layout.Controls.Add(searchRow, 0, 0); layout.Controls.Add(targetRow, 0, 1);
         layout.Controls.Add(options, 0, 2); layout.Controls.Add(geometry, 0, 3);
         layout.Controls.Add(previewArea, 0, 4); layout.Controls.Add(status, 0, 5);
@@ -153,20 +183,31 @@ public sealed class MainForm : BrandedForm
         if (busy) { filterDelay.Start(); return; }
         try
         {
-            var previous = selected?.Identity;
-            var entries = windows.Enumerate(search.Text.Trim());
-            reading = true;
-            try
-            {
-                targets.Items.Clear();
-                targets.Items.AddRange(entries.Cast<object>().ToArray());
-                targets.SelectedIndex = entries.ToList().FindIndex(x => x.Identity == previous);
-            }
-            finally { reading = false; }
-            SelectTarget();
-            if (selected is null) SetStatus(entries.Count == 0 ? "該当するウィンドウがありません。" : $"{entries.Count}件。対象を選択してください。");
+            candidates = windows.Enumerate("");
+            if (selected is not null)
+                selected = candidates.FirstOrDefault(entry => entry.Identity == selected.Identity) ?? selected;
+            ApplyTargetFilter();
+            RefreshState(false);
         }
         catch (Exception ex) { SetStatus($"一覧を取得できません: {ex.Message}", true); }
+    }
+
+    private void ApplyTargetFilter()
+    {
+        var entries = candidates.Where(entry => WindowCandidates.Matches(entry, search.Text)).ToList();
+        var count = entries.Count;
+        // 絞込外でも現在対象はコンボに保持し、検索だけで別ウィンドウを操作しない。
+        if (selected is not null && !entries.Any(entry => entry.Identity == selected.Identity)) entries.Insert(0, selected);
+        reading = true;
+        try
+        {
+            targets.BeginUpdate();
+            targets.Items.Clear();
+            targets.Items.AddRange(entries.Cast<object>().ToArray());
+            targets.SelectedIndex = entries.FindIndex(entry => entry.Identity == selected?.Identity);
+        }
+        finally { targets.EndUpdate(); reading = false; }
+        if (!picking) SetStatus(selected is null ? $"{count}件。対象を選択してください。" : $"候補 {count}件 / 対象: {selected.Title}");
     }
 
     private void SelectTarget()
@@ -178,27 +219,33 @@ public sealed class MainForm : BrandedForm
     private void SelectTargetCore()
     {
         var next = targets.SelectedItem as WindowEntry;
+        if (next is null) return;
+        ChooseTarget(next);
+    }
+
+    private void ChooseTarget(WindowEntry next)
+    {
+        var state = windows.GetState(next.Identity);
+        if (state is null) { SetStatus("対象が終了しました。一覧を更新してください。", true); return; }
         if (next?.Identity == selected?.Identity && next is not null) { selected = next; RefreshState(false); return; }
         editDelay.Stop();
         dirty = false;
         lastConstraintAttempt = null;
         selected = next;
-        current = next is null ? null : windows.GetState(next.Identity);
+        current = state;
         history.Select(current);
         preview.Clear();
         previewFailed = false;
         if (current is null) { ClearTarget("対象ウィンドウを選択してください"); return; }
-        try { preview.Attach(Handle, current.Target.Handle); }
-        catch (Exception ex) { previewFailed = true; SetStatus($"プレビューを開始できません: {ex.Message}", true); }
+        ApplyTargetFilter();
         WriteState(current);
         UpdateControls();
         UpdatePreview();
-        if (!previewFailed) SetStatus("位置とサイズは見える枠のピクセル値です。");
     }
 
     private void RefreshState(bool force)
     {
-        if (busy || selected is null) return;
+        if (busy || picking || selected is null) return;
         try
         {
             var state = windows.GetState(selected.Identity);
@@ -350,11 +397,18 @@ public sealed class MainForm : BrandedForm
         targets.Enabled = !busy;
         refresh.Enabled = !busy;
         search.Enabled = !busy;
+        targetPickerButton.Enabled = !busy;
     }
 
     private void UpdatePreview()
     {
         if (!IsHandleCreated || IsDisposed) return;
+        if (!previewExpanded) { preview.Clear(); return; }
+        if (current is not null && !preview.IsAttached && !previewFailed)
+        {
+            try { preview.Attach(Handle, current.Target.Handle); }
+            catch (Exception ex) { previewFailed = true; SetStatus($"プレビューを開始できません: {ex.Message}", true); }
+        }
         var visible = current is not null && !current.IsMinimized && WindowState != FormWindowState.Minimized && !previewFailed;
         previewMessage.Text = current is null ? "対象ウィンドウを選択してください"
             : current.IsMinimized ? "対象は最小化されています。復元するとプレビューを再開します。"
@@ -387,10 +441,88 @@ public sealed class MainForm : BrandedForm
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); }
+        if (disposing) { EndTargetPick(false); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); }
         base.Dispose(disposing);
     }
 
     // 自動回帰テストでは入力フォーカスや他の開発画面を奪わない。
     protected override bool ShowWithoutActivation => passive;
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (picking && keyData == Keys.Escape) { EndTargetPick(false); return true; }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private void BeginTargetPick()
+    {
+        if (busy || picking) return;
+        picking = true;
+        pickedCandidate = null;
+        editDelay.Stop();
+        if (!passive) { targetPickerButton.Capture = true; Cursor = Cursors.Cross; }
+        SetStatus("対象ウィンドウへドラッグして離してください。Escで取り消します。");
+    }
+
+    private void UpdateTargetPick(Point screenPoint)
+    {
+        if (!picking) return;
+        try { pickedCandidate = targetPicker.Resolve(screenPoint); }
+        catch (Exception ex) { pickedCandidate = null; SetStatus(ex.Message, true); return; }
+        SetStatus(pickedCandidate is null ? "選択できるウィンドウへドラッグしてください。Escで取消。" : $"選択候補: {pickedCandidate.Title}");
+    }
+
+    private void EndTargetPick(bool accept)
+    {
+        if (!picking) return;
+        var entry = pickedCandidate;
+        picking = false;
+        pickedCandidate = null;
+        if (!passive) { targetPickerButton.Capture = false; Cursor = Cursors.Default; }
+        if (accept && entry is not null)
+        {
+            try { ChooseTarget(entry); }
+            catch (Exception ex) { SetStatus($"対象を選択できません: {ex.Message}", true); }
+        }
+        else SetStatus("対象選択を取り消しました。");
+        if (dirty && autoApply.Checked && !IsDisposed) editDelay.Start();
+    }
+
+    private void TogglePreview()
+    {
+        var previousHeight = Height;
+        previewExpanded = !previewExpanded;
+        SuspendLayout();
+        try
+        {
+            if (!previewExpanded)
+            {
+                expandedPreviewHeight = Math.Max(150, layout.GetRowHeights()[4]);
+                preview.Clear();
+                previewArea.Visible = false;
+                layout.RowStyles[4].SizeType = SizeType.Absolute;
+                layout.RowStyles[4].Height = 0;
+                MinimumSize = new Size(MinimumSize.Width, 255 * DeviceDpi / 96);
+                if (WindowState == FormWindowState.Normal) ClientSize = new Size(ClientSize.Width, Math.Max(216 * DeviceDpi / 96, ClientSize.Height - expandedPreviewHeight));
+            }
+            else
+            {
+                MinimumSize = new Size(MinimumSize.Width, 420 * DeviceDpi / 96);
+                if (WindowState == FormWindowState.Normal)
+                {
+                    var area = Screen.FromControl(this).WorkingArea;
+                    Height = Math.Min(area.Height, Math.Max(MinimumSize.Height, previousHeight + expandedPreviewHeight));
+                    if (Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
+                }
+                layout.RowStyles[4].SizeType = SizeType.Percent;
+                layout.RowStyles[4].Height = 100;
+                previewArea.Visible = true;
+                previewFailed = false;
+            }
+            previewToggle.Text = previewExpanded ? "▲" : "▼";
+            previewToggle.AccessibleName = previewExpanded ? "プレビューを非表示" : "プレビューを表示";
+        }
+        finally { ResumeLayout(true); }
+        UpdatePreview();
+    }
 }

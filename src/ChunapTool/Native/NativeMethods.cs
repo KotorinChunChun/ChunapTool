@@ -124,6 +124,9 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern nint GetAncestor(nint window, uint flags);
 
+    [DllImport("user32.dll")]
+    internal static extern nint WindowFromPoint(Point point);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern SafeProcessHandle OpenProcess(uint access,
         [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);

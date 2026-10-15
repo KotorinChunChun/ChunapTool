@@ -13,6 +13,9 @@ public static class UiTests
         (string Name, Action Execute)[] tests =
         [
             ("初回表示では対象を自動選択せず操作しない", InitialSelection),
+            ("プレビューは初期停止し開閉で領域と高さを復元", CollapsedPreview),
+            ("検索は即時反映し0件でも現在対象と編集値を維持", ImmediateSearch),
+            ("ターゲットドラッグの確定と取消は対象を安全に選択", DragTargetSelection),
             ("自動読み取りと自動反映の4組合せを独立制御", IndependentAutomation),
             ("自動反映OFFではEnterと画面外設定で適用しない", ManualApplyOnly),
             ("自動反映OFFで待機中の反映を取消しONで再開", ToggleAutomaticApply),
@@ -63,6 +66,88 @@ public static class UiTests
         True(screen.Control<CheckBox>("autoRead").Checked, "自動読み取りの初期値はON");
         True(screen.Control<CheckBox>("autoApply").Checked, "自動反映の初期値はON");
         Equal("ChunapTool - ver 0.1.1", screen.Form.Text, "完成版のタイトル");
+    }
+
+    private static void CollapsedPreview()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        int collapsedHeight = screen.Form.Height;
+        var panel = screen.Control<Panel>("previewArea");
+        var toggle = screen.Control<Button>("previewToggle");
+        True(!panel.Visible, "起動時はプレビュー非表示");
+        True(!screen.Control<ChunapTool.Native.DwmPreview>("preview").IsAttached, "非表示時はDWM未登録");
+        Equal("▼", toggle.Text, "折りたたみ表示");
+        True(!screen.Control<Label>("status").Text.Contains("見える枠のピクセル値", StringComparison.Ordinal), "固定説明は表示しない");
+        toggle.PerformClick();
+        Application.DoEvents();
+        True(panel.Visible && panel.Height > 0, "展開すると領域を表示");
+        True(screen.Form.Height > collapsedHeight, "展開時に高さを増やす");
+        int expandedHeight = screen.Form.Height;
+        Equal("▲", toggle.Text, "展開表示");
+        toggle.PerformClick();
+        Application.DoEvents();
+        True(!panel.Visible, "折りたたむと領域を除去");
+        Equal(collapsedHeight, screen.Form.Height, "折りたたみ時の高さを復元");
+        toggle.PerformClick();
+        Application.DoEvents();
+        Equal(expandedHeight, screen.Form.Height, "再展開時の高さを復元");
+    }
+
+    private static void ImmediateSearch()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Numbers[0].Value = 444;
+        var search = screen.Control<TextBox>("search");
+        int enumerations = screen.Service.Enumerations;
+        search.Text = "一致しない検索";
+        Equal(FakeWindows.First, screen.Control<WindowEntry>("selected").Identity, "検索0件でも現在対象を維持");
+        Equal(444m, screen.Numbers[0].Value, "未適用値を保持");
+        Equal(1, screen.Targets.Items.Count, "絞込外の現在対象だけをコンボへ保持");
+        True(screen.Control<Label>("status").Text.Contains("候補 0件", StringComparison.Ordinal), "検索件数は現在対象と分離");
+        Equal(enumerations, screen.Service.Enumerations, "入力時にOS列挙を行わない");
+        search.Text = "Beta";
+        Equal(2, screen.Targets.Items.Count, "入力の直後にBetaと現在対象を表示");
+        search.Clear();
+        Equal(2, screen.Targets.Items.Count, "検索解除直後に全候補を表示");
+        Equal(0, screen.Service.Mutations, "検索では対象を変更しない");
+    }
+
+    private static void DragTargetSelection()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Picker.Next = screen.Service.Enumerate("")[1];
+        screen.Invoke("BeginTargetPick");
+        screen.Invoke("UpdateTargetPick", new Point(30, 40));
+        Equal(FakeWindows.First, screen.Control<WindowEntry>("selected").Identity, "ドラッグ中は未確定");
+        True(screen.Form.ManagementStopBlockReason is not null, "ドラッグ中は管理停止を拒否");
+        screen.Invoke("EndTargetPick", true);
+        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "離した時点で対象を確定");
+        EqualValues([320, 180, 620, 410], screen.Numbers, "確定した対象の座標を表示");
+
+        screen.Picker.Next = screen.Service.Enumerate("")[0];
+        screen.Invoke("BeginTargetPick");
+        screen.Invoke("UpdateTargetPick", Point.Empty);
+        var message = Message.Create(screen.Form.Handle, 0x100, (nint)Keys.Escape, 0);
+        var method = typeof(MainForm).GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Equal(true, (bool)method.Invoke(screen.Form, [message, Keys.Escape])!, "Escはドラッグを取り消す");
+        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "Escで元の対象を維持");
+        True(!screen.Control<bool>("picking"), "Esc後にドラッグ状態を解除");
+
+        screen.Picker.Next = null;
+        screen.Invoke("BeginTargetPick");
+        screen.Invoke("UpdateTargetPick", Point.Empty);
+        screen.Invoke("EndTargetPick", true);
+        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "無効な対象へのドロップでは変更しない");
+        screen.Invoke("BeginTargetPick");
+        typeof(Control).GetMethod("OnMouseCaptureChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(screen.Control<Button>("targetPickerButton"), [EventArgs.Empty]);
+        True(!screen.Control<bool>("picking"), "キャプチャ喪失で解除");
+        Equal(0, screen.Service.Mutations, "対象指定だけでは位置・サイズを変更しない");
     }
 
     private static void IndependentAutomation()
@@ -262,6 +347,7 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
+        screen.Control<Button>("previewToggle").PerformClick();
         screen.Service.SetShowCommand(FakeWindows.First, 2);
         screen.Invoke("RefreshState", false);
         True(screen.Numbers.All(control => !control.Enabled), "最小化中の座標欄は無効");
@@ -319,7 +405,7 @@ public static class UiTests
             rectangles.Add((control, bounds));
         }
 
-        True(screen.Control<Panel>("previewArea").Height > 0, "プレビューにも表示領域が残る");
+        True(!screen.Control<Panel>("previewArea").Visible, "初期状態ではプレビューを折りたたむ");
         var apply = screen.Control<Button>("apply");
         var outside = screen.Control<CheckBox>("allowOutside");
         True(apply.Right < outside.Left, "画面外可は適用ボタンの右に配置");
@@ -436,13 +522,14 @@ public static class UiTests
     private sealed class TestScreen : IDisposable
     {
         public FakeWindows Service { get; } = new();
+        public FakePicker Picker { get; } = new();
         public MainForm Form { get; }
         public ComboBox Targets => Control<ComboBox>("targets");
         public NumericUpDown[] Numbers => Control<NumericUpDown[]>("numbers");
 
         public TestScreen()
         {
-            Form = new MainForm(Service, passive: true);
+            Form = new MainForm(Service, passive: true, targetPicker: Picker);
             // 表示前に受動モードを確認し、他の開発画面へ重ねたりタスクバーへ追加したりしない。
             True(!Form.TopMost, "テストフォームは最前面ではない");
             Equal(0d, Form.Opacity, "テストフォームは完全に透明");
@@ -547,15 +634,19 @@ public static class UiTests
 
         public int Mutations { get; private set; }
         public int StateReads { get; private set; }
+        public int Enumerations { get; private set; }
         public bool RejectApplyBounds { get; set; }
         public bool IsLeftButtonDown => false;
 
-        public IReadOnlyList<WindowEntry> Enumerate(string filter) =>
-            new[] { new WindowEntry(First, "Alpha 検証対象", "TestAlpha"), new WindowEntry(Second, "Beta 検証対象", "TestBeta") }
+        public IReadOnlyList<WindowEntry> Enumerate(string filter)
+        {
+            Enumerations++;
+            return new[] { new WindowEntry(First, "Alpha 検証対象", "TestAlpha"), new WindowEntry(Second, "Beta 検証対象", "TestBeta") }
                 .Where(entry => states.ContainsKey(entry.Identity)
                     && (entry.Title.Contains(filter, StringComparison.OrdinalIgnoreCase)
                         || entry.ProcessName.Contains(filter, StringComparison.OrdinalIgnoreCase)))
                 .ToArray();
+        }
 
         public WindowState? GetState(WindowIdentity target)
         {
@@ -597,5 +688,11 @@ public static class UiTests
 
         private static WindowState MakeState(WindowIdentity target, WindowBounds bounds) =>
             new(target, bounds, new WindowPlacement(0, 1, new WindowPoint(-1, -1), new WindowPoint(-1, -1), bounds), true);
+    }
+
+    private sealed class FakePicker : IWindowTargetPicker
+    {
+        public WindowEntry? Next { get; set; }
+        public WindowEntry? Resolve(Point point) => Next;
     }
 }
