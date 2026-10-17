@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "chunap-tool",
   "name": "ChunapTool",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "summary": "選択したウィンドウの位置・サイズ・最大化を調整する",
   "category": "ウィンドウ操作",
   "executable": "artifacts/management/bin/ChunapTool/debug/ChunapTool.exe",
@@ -11,7 +11,8 @@
   "manual": "docs/guide.md",
   "readme": "README.md",
   "shortcuts": "config/shortcuts.json",
-  "distributionStatus": "unpublished",
+  "distributionStatus": "published",
+  "repositoryUrl": "https://github.com/KotorinChunChun/ChunapTool",
   "supportedEnvironment": "windows11-x64",
   "investigationStatus": "confirmed",
   "capabilities": [

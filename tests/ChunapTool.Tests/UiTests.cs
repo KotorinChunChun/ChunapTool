@@ -68,7 +68,7 @@ public static class UiTests
         Equal(0, screen.Service.Mutations, "起動時に他のウィンドウを変更しない");
         True(screen.Control<CheckBox>("autoRead").Checked, "自動読み取りの初期値はON");
         True(screen.Control<CheckBox>("autoApply").Checked, "自動反映の初期値はON");
-        Equal("ChunapTool - ver 0.1.1", screen.Form.Text, "完成版のタイトル");
+        Equal(WindowTitle.Create(), screen.Form.Text, "完成版のタイトル");
     }
 
     private static void CollapsedPreview()
