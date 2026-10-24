@@ -41,16 +41,7 @@ internal sealed class ManagementEndpoint : IDisposable
                     deadline.CancelAfter(TimeSpan.FromSeconds(2));
                     using var reader = new StreamReader(pipe, leaveOpen: true);
                     using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
-                    var line = await reader.ReadLineAsync(deadline.Token) ?? "";
-                    string command = line, requestId = "";
-                    int? expectedPid = null;
-                    if (line.StartsWith("{"))
-                    {
-                        using var request = JsonDocument.Parse(line);
-                        command = request.RootElement.GetProperty("command").GetString() ?? "";
-                        if (request.RootElement.TryGetProperty("requestId", out var req)) requestId = req.GetString() ?? "";
-                        if (request.RootElement.TryGetProperty("expectedPid", out var pid) && pid.ValueKind == JsonValueKind.Number) expectedPid = pid.GetInt32();
-                    }
+                    var (command, requestId, expectedPid) = ParseRequest(await ReadRequestAsync(reader, deadline.Token));
                     var result = "completed";
                     var detail = "";
                     object? keyState = null;
@@ -83,18 +74,57 @@ internal sealed class ManagementEndpoint : IDisposable
                     var uiReady = await applied.Task.WaitAsync(deadline.Token);
                     var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
                     var capabilities = shortcuts == null ? new[] { "status", "show", "stop" } : new[] { "status", "show", "stop", "shortcuts" };
+                    // 応答を読まないクライアントが単一の受付枠を占有し続けないよう、書込みにも期限を設ける。
                     await writer.WriteLineAsync(JsonSerializer.Serialize(new {
                         protocolVersion = 2, requestId, pid = Environment.ProcessId, ready = uiReady,
                         version = version == null ? null : $"{version.Major}.{version.Minor}.{version.Build}",
                         launchOrigin = LaunchOrigin, capabilities, result, detail, shortcuts = keyState
-                    }));
+                    }).AsMemory(), deadline.Token);
                     // 終了要求の受理を返してから、既存の正常終了へ渡す。完了はクライアントがプロセスで確認する。
                     if (stopAccepted && !dispatcher.IsDisposed) dispatcher.BeginInvoke(stop);
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) when (ex is IOException or InvalidOperationException or JsonException or KeyNotFoundException) { }
+                catch (Exception ex)
+                {
+                    // 1件の不正な要求や想定外の失敗で受付ループを終了させない。連続失敗時は少し待って再試行する。
+                    Debug.WriteLine($"管理要求を処理できませんでした: {ex.GetType().Name}");
+                    try { await Task.Delay(RetryDelay, lifetime.Token); }
+                    catch (OperationCanceledException) { }
+                }
             }
         });
+    }
+
+    internal const int MaximumRequestLength = 4096;
+    static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(200);
+
+    // 改行までの1要求を読む。上限を超える要求は全体を読まずに拒否する。
+    internal static async Task<string> ReadRequestAsync(TextReader reader, CancellationToken cancellationToken)
+    {
+        var line = new System.Text.StringBuilder();
+        var buffer = new char[256];
+        while (true)
+        {
+            int count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (count == 0) return line.ToString();
+            int end = Array.IndexOf(buffer, '\n', 0, count);
+            line.Append(buffer, 0, end >= 0 ? end : count);
+            if (line.Length > MaximumRequestLength) throw new InvalidDataException("管理要求が長すぎます。");
+            if (end >= 0) return line.ToString().TrimEnd('\r');
+        }
+    }
+
+    // 文字列のみの旧形式と、JSONの新形式を解釈する。期待PIDが整数でなければ一致しない値として扱う。
+    internal static (string Command, string RequestId, int? ExpectedPid) ParseRequest(string line)
+    {
+        if (!line.StartsWith('{')) return (line, "", null);
+        using var request = JsonDocument.Parse(line);
+        var command = request.RootElement.GetProperty("command").GetString() ?? "";
+        var requestId = request.RootElement.TryGetProperty("requestId", out var req) ? req.GetString() ?? "" : "";
+        int? expectedPid = null;
+        if (request.RootElement.TryGetProperty("expectedPid", out var pid) && pid.ValueKind == JsonValueKind.Number)
+            expectedPid = pid.TryGetInt32(out var value) ? value : 0;
+        return (command, requestId, expectedPid);
     }
 
     public static void ShowExisting(string id)
