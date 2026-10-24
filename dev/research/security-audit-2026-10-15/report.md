@@ -6,7 +6,7 @@
 
 |ID|重大度・成立条件|証拠|改善・実装状況|
 |---|---|---|---|
-|CHN-01|中。同一利用者が巨大な管理pipe要求を送るか、巨大requestIdへの応答を読まない場合、メモリ消費/受付停止が可能。|`src/ChunapTool/Integration/ManagementEndpoint.cs:45` の読取り上限なし、`:86` の書込みdeadlineなし。|要求/応答上限と書込み期限を追加する。高/致命的ではないため報告まで。|
+|CHN-01|中。同一利用者が巨大な管理pipe要求を送るか、巨大requestIdへの応答を読まない場合、メモリ消費/受付停止が可能。|`src/ChunapTool/Integration/ManagementEndpoint.cs:45` の読取り上限なし、`:86` の書込みdeadlineなし。|要求/応答上限と書込み期限を追加する。高/致命的ではないため報告まで。2026-10-25実装済み：要求4096文字上限、応答書込みへ2秒期限、不正要求後の受付継続（[コードレビュー修正記録](../code-review-2026-10-25/report.md)）。|
 
 `Native/NativeWindowService.cs:156` はHWNDだけでなくPID一致を照合するため、別プロセスへ再利用された窓への適用を防ぐ。`:171` はSendMessageTimeoutを使用。`Native/DwmPreview.cs:24` は出力先窓が自身のプロセスか確認する。管理pipeはCurrentUserOnly、読取り2秒期限。製品は選択された外部ウィンドウを利用者権限で操作する設計であり、UAC境界を突破する機能は確認されなかった。高/致命的の確定事項は見つからなかった。
 
