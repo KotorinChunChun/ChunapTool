@@ -383,10 +383,14 @@ public sealed class MainForm : BrandedForm
             if (!history.TryPeekUndo(out var target) || target is null)
                 throw new InvalidOperationException("戻せる履歴がありません。");
             windows.Restore(target);
-            return state => state.IsMaximized == target.IsMaximized && !state.IsMinimized
-                && state.Placement.NormalBounds == target.Placement.NormalBounds;
+            return state => UndoCompleted(state, target);
         }, isUndo: true);
     }
+
+    // 最大化は通常復元位置で、通常表示は見える矩形で比べる。スナップ中は両者が一致しない。
+    private static bool UndoCompleted(WindowState actual, WindowState target) =>
+        actual.IsMaximized == target.IsMaximized && !actual.IsMinimized
+        && (target.IsMaximized ? actual.Placement.NormalBounds == target.Placement.NormalBounds : actual.Bounds == target.Bounds);
 
     private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true, bool readGeometry = true, bool keepGeometryEditable = false)
     {

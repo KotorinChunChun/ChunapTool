@@ -74,13 +74,14 @@ public sealed class NativeWindowService : IWindowService
             throw new Win32Exception(error, "ウィンドウの位置を取得できませんでした。");
         }
         bool canMaximize = (NativeMethods.GetWindowLong(target.Handle, -16) & 0x00010000) != 0;
+        WindowBounds? outerBounds = NativeMethods.GetWindowRect(target.Handle, out var outer) ? ToBounds(outer) : null;
         if (!Matches(target))
             return null;
         // 非同期指定は操作方法であり、Undoの比較対象となる位置状態には含めない。
         var savedPlacement = new WindowPlacement(placement.Flags & ~NativeMethods.AsyncWindowPlacement,
             placement.ShowCommand, new WindowPoint(placement.MinPosition.X, placement.MinPosition.Y),
             new WindowPoint(placement.MaxPosition.X, placement.MaxPosition.Y), ToBounds(placement.NormalPosition));
-        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize);
+        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize) { OuterBounds = outerBounds };
     }
 
     public WindowBounds GetWorkArea(WindowIdentity target)
@@ -151,6 +152,14 @@ public sealed class NativeWindowService : IWindowService
         // WINDOWPLACEMENTの作業領域座標を画面座標へ読み替えず、そのまま復元する。
         if (!NativeMethods.SetWindowPlacement(state.Target.Handle, in placement))
             throw LastError("保存したウィンドウ状態を復元できませんでした。");
+        // スナップ中の通常復元位置はスナップ前の位置を指す。通常表示へ戻す場合は記録した外枠へ合わせる。
+        // 非同期要求は対象スレッドで順に処理されるため、配置の復元後に位置が確定する。
+        if (state is { IsMaximized: false, IsMinimized: false, OuterBounds: { } outer })
+        {
+            const uint flags = 0x4000 | 0x0004 | 0x0010;
+            if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, flags))
+                throw LastError("保存したウィンドウ位置を復元できませんでした。");
+        }
     }
 
     internal static bool Matches(WindowIdentity target) => target.Handle != 0

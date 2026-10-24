@@ -32,6 +32,7 @@ public static class UiTests
             ("対象終了後は編集・適用・Undoを無効化", TargetClosed),
             ("最小ウィンドウサイズでも全操作を画面内に配置", MinimumLayout),
             ("ポーリング前の外部変更もUndo開始時に取り込む", UndoLatestExternalChange),
+            ("スナップ中の位置へのUndoは見える位置の一致で完了とする", UndoSnappedState),
             ("画面外への移動と自動補正を1操作として戻す", AutoConstrainAsOneStep),
             ("拒否された自動補正を同じ状態で繰り返さない", AutoConstrainRetry),
             ("変更の待機中に閉じても破棄した画面へ更新しない", DisposeDuringMutation),
@@ -532,6 +533,33 @@ public static class UiTests
         Equal(1, screen.Service.Mutations, "Undoを一度だけ送信");
     }
 
+    private static void UndoSnappedState()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        // スナップ中は見える位置が左半分、通常復元位置はスナップ前の位置となる。
+        var snapped = new WindowBounds(0, 0, 960, 1040);
+        var beforeSnap = screen.Service.GetState(FakeWindows.First)!.Bounds;
+        screen.Service.SetFirst(screen.Service.GetState(FakeWindows.First)! with { Bounds = snapped });
+        screen.Invoke("RefreshState", false);
+        screen.Service.UpdateFirst(new WindowBounds(400, 300, 500, 340));
+        screen.Invoke("RefreshState", false);
+        Equal(2, screen.Control<WindowHistory>("history").Count, "スナップと移動を履歴へ記録");
+
+        screen.Service.RestorePlacementOnly = true;
+        screen.Await(screen.InvokeTask("UndoAsync"));
+        Equal(beforeSnap, screen.Service.GetState(FakeWindows.First)!.Bounds, "通常復元位置だけを戻す実装を再現");
+        True(screen.Control<Label>("status").Text.StartsWith("変更できません", StringComparison.Ordinal), "見える位置が違えば成功と表示しない");
+        Equal(2, screen.Control<WindowHistory>("history").Count, "失敗したUndoは履歴を消費しない");
+
+        // 失敗したUndoで動いた位置を履歴へ入れないよう、移動後の状態へ戻してから再実行する。
+        screen.Service.UpdateFirst(new WindowBounds(400, 300, 500, 340));
+        screen.Service.RestorePlacementOnly = false;
+        screen.Await(screen.InvokeTask("UndoAsync"));
+        Equal(snapped, screen.Service.GetState(FakeWindows.First)!.Bounds, "スナップ中の見える位置へ戻す");
+        Equal("直前の状態に戻しました。", screen.Control<Label>("status").Text, "成功を表示");
+    }
+
     private static void AutoConstrainAsOneStep()
     {
         using var screen = new TestScreen();
@@ -764,12 +792,18 @@ public static class UiTests
             SetShowCommand(target, maximized ? 3u : 1u);
         }
 
+        // trueでは修正前の実装と同様に、通常復元位置だけを戻して見える位置を合わせない。
+        public bool RestorePlacementOnly { get; set; }
+
         public void Restore(WindowState state)
         {
             Mutations++;
-            states[state.Target] = state;
+            states[state.Target] = RestorePlacementOnly && !state.IsMaximized
+                ? state with { Bounds = state.Placement.NormalBounds }
+                : state;
         }
 
+        public void SetFirst(WindowState state) => states[First] = state;
         public void UpdateFirst(WindowBounds bounds) => states[First] = MakeState(First, bounds);
         public void UpdateSecond(WindowBounds bounds) => states[Second] = MakeState(Second, bounds);
         public void RemoveFirst() => states.Remove(First);
