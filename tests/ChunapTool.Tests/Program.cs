@@ -5,6 +5,13 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--management-tests")
+        {
+            var directory = Path.GetFullPath(args[1]);
+            Directory.CreateDirectory(directory);
+            ManagementTests.Run(directory);
+            return 0;
+        }
         if (args.Length == 2 && args[0] == "--capture-smoke") return WgcSmokeTests.Run(args[1]);
         if (args.SequenceEqual(new[] { "--native" })) return NativeTests.Run();
         if (args.SequenceEqual(new[] { "--ui" }))
