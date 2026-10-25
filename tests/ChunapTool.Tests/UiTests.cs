@@ -64,11 +64,11 @@ public static class UiTests
         Equal(2, screen.Targets.Items.Count, "候補数");
         Equal(-1, screen.Targets.SelectedIndex, "起動時の選択");
         True(screen.Numbers.All(control => !control.Enabled), "未選択の座標欄は無効");
-        True(!screen.Control<Button>("apply").Enabled, "未選択の適用は無効");
-        True(!screen.Control<CheckBox>("maximize").Enabled, "未選択の最大化は無効");
+        True(!screen.Form.apply.Enabled, "未選択の適用は無効");
+        True(!screen.Form.maximize.Enabled, "未選択の最大化は無効");
         Equal(0, screen.Service.Mutations, "起動時に他のウィンドウを変更しない");
-        True(screen.Control<CheckBox>("autoRead").Checked, "自動読み取りの初期値はON");
-        True(screen.Control<CheckBox>("autoApply").Checked, "自動反映の初期値はON");
+        True(screen.Form.autoRead.Checked, "自動読み取りの初期値はON");
+        True(screen.Form.autoApply.Checked, "自動反映の初期値はON");
         Equal(WindowTitle.Create(), screen.Form.Text, "完成版のタイトル");
     }
 
@@ -77,12 +77,12 @@ public static class UiTests
         using var screen = new TestScreen();
         screen.Select(0);
         int collapsedHeight = screen.Form.Height;
-        var panel = screen.Control<Panel>("previewArea");
-        var toggle = screen.Control<Button>("previewToggle");
+        var panel = screen.Form.previewArea;
+        var toggle = screen.Form.previewToggle;
         True(!panel.Visible, "起動時はプレビュー非表示");
-        True(!screen.Control<ChunapTool.Native.DwmPreview>("preview").IsAttached, "非表示時はDWM未登録");
+        True(!screen.Form.preview.IsAttached, "非表示時はDWM未登録");
         Equal("▼", toggle.Text, "折りたたみ表示");
-        True(!screen.Control<Label>("status").Text.Contains("見える枠のピクセル値", StringComparison.Ordinal), "固定説明は表示しない");
+        True(!screen.Form.status.Text.Contains("見える枠のピクセル値", StringComparison.Ordinal), "固定説明は表示しない");
         toggle.PerformClick();
         Application.DoEvents();
         True(panel.Visible && panel.Height > 0, "展開すると領域を表示");
@@ -102,15 +102,15 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Numbers[0].Value = 444;
-        var search = screen.Control<TextBox>("search");
+        var search = screen.Form.search;
         int enumerations = screen.Service.Enumerations;
         search.Text = "一致しない検索";
-        Equal(FakeWindows.First, screen.Control<WindowEntry>("selected").Identity, "検索0件でも現在対象を維持");
+        Equal(FakeWindows.First, screen.Form.selected!.Identity, "検索0件でも現在対象を維持");
         Equal(444m, screen.Numbers[0].Value, "未適用値を保持");
         Equal(1, screen.Targets.Items.Count, "絞込外の現在対象だけをコンボへ保持");
-        True(screen.Control<Label>("status").Text.Contains("候補 0件", StringComparison.Ordinal), "検索件数は現在対象と分離");
+        True(screen.Form.status.Text.Contains("候補 0件", StringComparison.Ordinal), "検索件数は現在対象と分離");
         Equal(enumerations, screen.Service.Enumerations, "入力時にOS列挙を行わない");
         search.Text = "Beta";
         Equal(2, screen.Targets.Items.Count, "入力の直後にBetaと現在対象を表示");
@@ -123,35 +123,35 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Picker.Next = screen.Service.Enumerate("")[1];
-        screen.Invoke("BeginTargetPick");
-        screen.Invoke("UpdateTargetPick", new Point(30, 40));
-        Equal(FakeWindows.First, screen.Control<WindowEntry>("selected").Identity, "ドラッグ中は未確定");
+        screen.Form.BeginTargetPick();
+        screen.Form.UpdateTargetPick(new Point(30, 40));
+        Equal(FakeWindows.First, screen.Form.selected!.Identity, "ドラッグ中は未確定");
         True(screen.Form.ManagementStopBlockReason is not null, "ドラッグ中は管理停止を拒否");
         True(!screen.Targets.Enabled && screen.Numbers.All(number => !number.Enabled), "ドラッグ中は別の編集を停止");
-        screen.Invoke("EndTargetPick", true);
-        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "離した時点で対象を確定");
+        screen.Form.EndTargetPick(true);
+        Equal(FakeWindows.Second, screen.Form.selected!.Identity, "離した時点で対象を確定");
         EqualValues([320, 180, 620, 410], screen.Numbers, "確定した対象の座標を表示");
 
         screen.Picker.Next = screen.Service.Enumerate("")[0];
-        screen.Invoke("BeginTargetPick");
-        screen.Invoke("UpdateTargetPick", Point.Empty);
+        screen.Form.BeginTargetPick();
+        screen.Form.UpdateTargetPick(Point.Empty);
         var message = Message.Create(screen.Form.Handle, 0x100, (nint)Keys.Escape, 0);
         var method = typeof(MainForm).GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Equal(true, (bool)method.Invoke(screen.Form, [message, Keys.Escape])!, "Escはドラッグを取り消す");
-        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "Escで元の対象を維持");
-        True(!screen.Control<bool>("picking"), "Esc後にドラッグ状態を解除");
+        Equal(FakeWindows.Second, screen.Form.selected!.Identity, "Escで元の対象を維持");
+        True(!screen.Form.picking, "Esc後にドラッグ状態を解除");
 
         screen.Picker.Next = null;
-        screen.Invoke("BeginTargetPick");
-        screen.Invoke("UpdateTargetPick", Point.Empty);
-        screen.Invoke("EndTargetPick", true);
-        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "無効な対象へのドロップでは変更しない");
-        screen.Invoke("BeginTargetPick");
+        screen.Form.BeginTargetPick();
+        screen.Form.UpdateTargetPick(Point.Empty);
+        screen.Form.EndTargetPick(true);
+        Equal(FakeWindows.Second, screen.Form.selected!.Identity, "無効な対象へのドロップでは変更しない");
+        screen.Form.BeginTargetPick();
         typeof(Control).GetMethod("OnMouseCaptureChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(screen.Control<Button>("targetPickerButton"), [EventArgs.Empty]);
-        True(!screen.Control<bool>("picking"), "キャプチャ喪失で解除");
+            .Invoke(screen.Form.targetPickerButton, [EventArgs.Empty]);
+        True(!screen.Form.picking, "キャプチャ喪失で解除");
         Equal(0, screen.Service.Mutations, "対象指定だけでは位置・サイズを変更しない");
     }
 
@@ -159,23 +159,23 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Picker.Next = screen.Service.Enumerate("")[1];
-        var button = screen.Control<Button>("targetPickerButton");
+        var button = screen.Form.targetPickerButton;
         static void RaiseMouse(Control control, string name) => typeof(Control)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(control, [new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0)]);
         RaiseMouse(button, "OnMouseDown");
-        True(screen.Control<bool>("picking"), "マウス押下で開始");
+        True(screen.Form.picking, "マウス押下で開始");
         RaiseMouse(button, "OnMouseMove");
         RaiseMouse(button, "OnMouseUp");
-        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "マウス解放イベントで確定");
-        True(screen.Targets.Enabled && !screen.Control<bool>("picking"), "確定後に操作を復元");
+        Equal(FakeWindows.Second, screen.Form.selected!.Identity, "マウス解放イベントで確定");
+        True(screen.Targets.Enabled && !screen.Form.picking, "確定後に操作を復元");
 
         var dead = screen.Service.Enumerate("")[0];
         screen.Service.RemoveFirst();
         screen.Targets.SelectedItem = dead;
-        Equal(FakeWindows.Second, screen.Control<WindowEntry>("selected").Identity, "終了した候補は現在対象を変えない");
+        Equal(FakeWindows.Second, screen.Form.selected!.Identity, "終了した候補は現在対象を変えない");
         Equal(FakeWindows.Second, ((WindowEntry)screen.Targets.SelectedItem!).Identity, "コンボも元の現在対象へ戻す");
         Equal(0, screen.Service.Mutations, "選択では位置を変更しない");
     }
@@ -187,18 +187,18 @@ public static class UiTests
         {
             using var screen = new TestScreen();
             screen.Select(0);
-            screen.Control<CheckBox>("autoRead").Checked = read;
-            screen.Control<CheckBox>("autoApply").Checked = apply;
+            screen.Form.autoRead.Checked = read;
+            screen.Form.autoApply.Checked = apply;
             var external = new WindowBounds(200, 160, 540, 380);
             screen.Service.UpdateFirst(external);
-            screen.Invoke("RefreshState", false);
+            screen.Form.RefreshState(false);
             Equal(read ? 200m : 120m, screen.Numbers[0].Value, $"読取={read}/反映={apply}: 外部移動の表示");
             Equal(0, screen.Service.Mutations, "読み取りだけで反映を送信しない");
-            Equal(!apply, screen.Control<Button>("apply").Enabled, "適用の有効状態は自動反映だけで決まる");
+            Equal(!apply, screen.Form.apply.Enabled, "適用の有効状態は自動反映だけで決まる");
 
             screen.Numbers[0].Value = 350;
             screen.Service.UpdateFirst(external with { Y = 170 });
-            screen.Invoke("RefreshState", false);
+            screen.Form.RefreshState(false);
             Equal(350m, screen.Numbers[0].Value, "読み取りONでも未適用値は保護する");
             if (apply)
             {
@@ -209,7 +209,7 @@ public static class UiTests
             {
                 screen.PumpFor(350);
                 Equal(0, screen.Service.Mutations, "自動反映OFFでは待機しても反映しない");
-                screen.Control<Button>("apply").PerformClick();
+                screen.Form.apply.PerformClick();
                 screen.AwaitIdle();
                 Equal(350, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "適用ボタンで反映する");
             }
@@ -220,22 +220,22 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Numbers[0].Value = 320;
         screen.RaiseEnter(screen.Numbers[0]);
-        screen.Control<CheckBox>("allowOutside").Checked = true;
-        screen.Control<CheckBox>("allowOutside").Checked = false;
+        screen.Form.allowOutside.Checked = true;
+        screen.Form.allowOutside.Checked = false;
         screen.PumpFor(350);
         Equal(0, screen.Service.Mutations, "Enterと設定切替で未適用値を送信しない");
-        screen.Control<Button>("apply").PerformClick();
+        screen.Form.apply.PerformClick();
         screen.AwaitIdle();
         Equal(320, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "適用ボタンで編集値を反映");
 
         screen.Service.UpdateFirst(new WindowBounds(-150, 80, 500, 340));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.PumpFor(100);
         Equal(1, screen.Service.Mutations, "自動反映OFFでは定期処理の画面内補正もしない");
-        screen.Control<Button>("apply").PerformClick();
+        screen.Form.apply.PerformClick();
         screen.AwaitIdle();
         Equal(0, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "手動適用時に画面内へ制限");
     }
@@ -252,7 +252,7 @@ public static class UiTests
             screen.Form.ActiveControl = number;
             number.Value += 10;
             screen.RaiseEnter(number);
-            True(screen.Control<bool>("busy"), "Enterから反映処理を開始");
+            True(screen.Form.busy, "Enterから反映処理を開始");
             True(screen.Numbers.All(control => control.Enabled), "安定確認中も座標欄を有効に保つ");
             Equal<Control>(number, screen.Form.ActiveControl!, "Enter後も同じ入力先");
             var next = index < 3 ? screen.Numbers[index + 1] : screen.Numbers[index - 1];
@@ -263,14 +263,14 @@ public static class UiTests
             True(!screen.Form.ContainsFocus, "論理入力先の確認後もフォームは非アクティブ");
         }
 
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Form.ActiveControl = screen.Numbers[0];
         screen.Numbers[0].Value += 10;
-        screen.Await(screen.InvokeTask("ApplyAsync"));
+        screen.Await(screen.Form.ApplyAsync());
         Equal<Control>(screen.Numbers[0], screen.Form.ActiveControl!, "手動適用でも入力先を維持");
         screen.Service.RejectApplyBounds = true;
         screen.Numbers[0].Value += 10;
-        screen.Await(screen.InvokeTask("ApplyAsync"));
+        screen.Await(screen.Form.ApplyAsync());
         Equal<Control>(screen.Numbers[0], screen.Form.ActiveControl!, "適用失敗時も入力先を維持");
         True(screen.Numbers.All(control => control.Enabled), "失敗後も入力可能");
     }
@@ -281,11 +281,11 @@ public static class UiTests
         {
             using var screen = new TestScreen();
             screen.Select(0);
-            screen.Control<CheckBox>("autoApply").Checked = automatic;
+            screen.Form.autoApply.Checked = automatic;
             screen.Numbers[0].Value = 250;
             True(SynchronizationContext.Current is WindowsFormsSynchronizationContext, "反映継続はUI同期コンテキストで実行");
-            var firstApply = screen.InvokeTask("ApplyAsync");
-            True(screen.Control<bool>("busy"), "最初の反映は安定確認中");
+            var firstApply = screen.Form.ApplyAsync();
+            True(screen.Form.busy, "最初の反映は安定確認中");
             screen.Numbers[1].Value = 150;
             screen.Numbers[2].Text = "650";
             screen.Await(firstApply);
@@ -297,7 +297,7 @@ public static class UiTests
             {
                 screen.PumpFor(350);
                 Equal(1, screen.Service.Mutations, "手動設定では確認中の編集も自動反映しない");
-                screen.Await(screen.InvokeTask("ApplyAsync"));
+                screen.Await(screen.Form.ApplyAsync());
             }
             Equal(new WindowBounds(250, 150, 650, 340), screen.Service.GetState(FakeWindows.First)!.Bounds, "続けて入力した値を欠落させず反映");
         }
@@ -308,30 +308,30 @@ public static class UiTests
         using var screen = new TestScreen();
         screen.Select(0);
         screen.Numbers[0].Value = 260;
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.PumpFor(350);
         Equal(0, screen.Service.Mutations, "OFF切替で待機中の自動反映を取消す");
         Equal(260m, screen.Numbers[0].Value, "OFFへ切り替えても編集値は保持");
-        screen.Control<CheckBox>("autoApply").Checked = true;
+        screen.Form.autoApply.Checked = true;
         screen.AwaitMutations(1);
         Equal(260, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "ON切替で保留した編集を反映");
-        True(!screen.Control<Button>("apply").Enabled, "ONでは適用ボタンを無効化");
+        True(!screen.Form.apply.Enabled, "ONでは適用ボタンを無効化");
     }
 
     private static void ObserveSafetyWithoutAutomaticRead()
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoRead").Checked = false;
+        screen.Form.autoRead.Checked = false;
         screen.Service.UpdateFirst(new WindowBounds(250, 160, 540, 380));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         Equal(120m, screen.Numbers[0].Value, "自動読み取りOFFで座標欄を変更しない");
         screen.Service.SetShowCommand(FakeWindows.First, 3);
-        screen.Invoke("RefreshState", false);
-        Equal("通常化", screen.Control<CheckBox>("maximize").Text, "自動読み取りOFFでも最大化状態を表示");
+        screen.Form.RefreshState(false);
+        Equal("通常化", screen.Form.maximize.Text, "自動読み取りOFFでも最大化状態を表示");
         True(screen.Numbers.All(control => !control.Enabled), "最大化中の座標入力は停止");
         screen.Service.RemoveFirst();
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         Equal(-1, screen.Targets.SelectedIndex, "自動読み取りOFFでも対象終了を検出");
     }
 
@@ -339,7 +339,7 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        var maximize = screen.Control<CheckBox>("maximize");
+        var maximize = screen.Form.maximize;
         Equal("最大化", maximize.Text, "通常状態の表示");
         maximize.Checked = true;
         screen.AwaitIdle();
@@ -347,9 +347,9 @@ public static class UiTests
         maximize.Checked = false;
         screen.AwaitIdle();
         Equal("最大化", maximize.Text, "通常化操作後の表示");
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal("通常化", maximize.Text, "Undoで最大化した際の表示");
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal("最大化", maximize.Text, "Undoで通常表示へ戻した際の表示");
     }
 
@@ -357,13 +357,13 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoRead").Checked = false;
+        screen.Form.autoRead.Checked = false;
         screen.Service.UpdateFirst(new WindowBounds(-150, 90, 550, 350));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.AwaitIdle();
         Equal(0, screen.Service.GetState(FakeWindows.First)!.Bounds.X, "自動反映ONの画面内補正は継続する");
         EqualValues([120, 80, 500, 340], screen.Numbers, "自動読み取りOFFでは補正後の座標を自動表示しない");
-        screen.Control<CheckBox>("autoRead").Checked = true;
+        screen.Form.autoRead.Checked = true;
         EqualValues([0, 90, 550, 350], screen.Numbers, "自動読み取りONで現在値を表示");
     }
 
@@ -371,7 +371,7 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         decimal[] pending = [333, 222, 777, 444];
         for (int index = 0; index < pending.Length; index++)
         {
@@ -379,19 +379,19 @@ public static class UiTests
         }
 
         screen.Service.UpdateFirst(new WindowBounds(140, 90, 510, 350));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         EqualValues(pending, screen.Numbers, "定期更新後");
 
-        screen.Control<Button>("refresh").PerformClick();
+        screen.Form.refresh.PerformClick();
         EqualValues(pending, screen.Numbers, "一覧更新後");
 
-        screen.Control<TextBox>("search").Text = "Alpha";
-        screen.Invoke("RefreshTargets");
+        screen.Form.search.Text = "Alpha";
+        screen.Form.RefreshTargets();
         screen.StopTimers();
         Equal(1, screen.Targets.Items.Count, "検索結果数");
         Equal(FakeWindows.First, ((WindowEntry)screen.Targets.SelectedItem!).Identity, "検索後も同じ対象");
         EqualValues(pending, screen.Numbers, "検索後");
-        True(screen.Control<Button>("apply").Enabled, "未適用値を適用可能");
+        True(screen.Form.apply.Enabled, "未適用値を適用可能");
         Equal(0, screen.Service.Mutations, "自動反映OFFの編集でサービスを変更しない");
     }
 
@@ -399,18 +399,18 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Service.UpdateFirst(new WindowBounds(150, 90, 510, 350));
-        screen.Invoke("RefreshState", false);
-        True(screen.Control<Button>("undo").Enabled, "最初の対象には変更履歴がある");
+        screen.Form.RefreshState(false);
+        True(screen.Form.undo.Enabled, "最初の対象には変更履歴がある");
         screen.Numbers[0].Value = 999;
 
         screen.Select(1);
         EqualValues([320, 180, 620, 410], screen.Numbers, "別対象を選んだ後");
-        True(!screen.Control<Button>("undo").Enabled, "前の対象の履歴を持ち越さない");
+        True(!screen.Form.undo.Enabled, "前の対象の履歴を持ち越さない");
 
         screen.Service.UpdateSecond(new WindowBounds(330, 190, 630, 420));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         EqualValues([330, 190, 630, 420], screen.Numbers, "新しい対象には未適用値が残らない");
         Equal(0, screen.Service.Mutations, "選択切替だけではサービスを変更しない");
     }
@@ -419,20 +419,20 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Service.SetShowCommand(FakeWindows.First, 3);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         True(screen.Numbers.All(control => !control.Enabled), "最大化中の座標欄は無効");
-        True(!screen.Control<Button>("apply").Enabled, "最大化中の適用は無効");
-        True(screen.Control<CheckBox>("maximize").Checked, "外部での最大化を表示");
-        True(screen.Control<CheckBox>("maximize").Enabled, "最大化から復帰できる");
-        Equal("通常化", screen.Control<CheckBox>("maximize").Text, "外部最大化の表示");
+        True(!screen.Form.apply.Enabled, "最大化中の適用は無効");
+        True(screen.Form.maximize.Checked, "外部での最大化を表示");
+        True(screen.Form.maximize.Enabled, "最大化から復帰できる");
+        Equal("通常化", screen.Form.maximize.Text, "外部最大化の表示");
 
         screen.Service.SetShowCommand(FakeWindows.First, 1);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         True(screen.Numbers.All(control => control.Enabled), "通常状態に戻ると編集可能");
-        True(screen.Control<Button>("apply").Enabled, "通常状態の手動適用は有効");
-        Equal("最大化", screen.Control<CheckBox>("maximize").Text, "外部通常化の表示");
+        True(screen.Form.apply.Enabled, "通常状態の手動適用は有効");
+        Equal("最大化", screen.Form.maximize.Text, "外部通常化の表示");
         Equal(0, screen.Service.Mutations, "表示の更新を最大化操作として送らない");
     }
 
@@ -440,13 +440,13 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<Button>("previewToggle").PerformClick();
+        screen.Form.previewToggle.PerformClick();
         screen.Service.SetShowCommand(FakeWindows.First, 2);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         True(screen.Numbers.All(control => !control.Enabled), "最小化中の座標欄は無効");
-        True(!screen.Control<Button>("apply").Enabled, "最小化中の適用は無効");
-        True(!screen.Control<CheckBox>("maximize").Enabled, "最小化中の最大化は無効");
-        True(screen.Control<Label>("previewMessage").Text.Contains("最小化", StringComparison.Ordinal), "最小化中の案内を表示");
+        True(!screen.Form.apply.Enabled, "最小化中の適用は無効");
+        True(!screen.Form.maximize.Enabled, "最小化中の最大化は無効");
+        True(screen.Form.previewMessage.Text.Contains("最小化", StringComparison.Ordinal), "最小化中の案内を表示");
         Equal(0, screen.Service.Mutations, "最小化を観測してもサービスを変更しない");
     }
 
@@ -454,21 +454,21 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Service.UpdateFirst(new WindowBounds(150, 90, 510, 350));
-        screen.Invoke("RefreshState", false);
-        True(screen.Control<Button>("undo").Enabled, "終了前には履歴がある");
+        screen.Form.RefreshState(false);
+        True(screen.Form.undo.Enabled, "終了前には履歴がある");
 
         screen.Service.RemoveFirst();
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         Equal(-1, screen.Targets.SelectedIndex, "終了した対象の選択解除");
         True(screen.Numbers.All(control => !control.Enabled), "対象終了後の座標欄は無効");
-        foreach (string field in new[] { "apply", "undo", "maximize", "autoRead", "autoApply", "allowOutside" })
+        foreach (Control control in new Control[] { screen.Form.apply, screen.Form.undo, screen.Form.maximize, screen.Form.autoRead, screen.Form.autoApply, screen.Form.allowOutside })
         {
-            True(!screen.Control<Control>(field).Enabled, $"対象終了後の{field}は無効");
+            True(!control.Enabled, $"対象終了後の{control.Text}は無効");
         }
 
-        True(screen.Control<Label>("status").Text.Contains("終了", StringComparison.Ordinal), "対象終了を案内");
+        True(screen.Form.status.Text.Contains("終了", StringComparison.Ordinal), "対象終了を案内");
         Equal(0, screen.Service.Mutations, "終了した対象へ変更を送らない");
     }
 
@@ -481,11 +481,11 @@ public static class UiTests
 
         // 行の高さなどは96DPI基準で指定している。表示倍率に比例して拡大されなければ文字だけが大きくなり部品がはみ出す。
         int dpi = screen.Form.DeviceDpi;
-        var rowHeights = screen.Control<TableLayoutPanel>("layout").GetRowHeights();
+        var rowHeights = screen.Form.layout.GetRowHeights();
         True(Math.Abs(rowHeights[0] - 38 * dpi / 96) <= 1 && Math.Abs(rowHeights[5] - 34 * dpi / 96) <= 1, $"行の高さを表示倍率に合わせて拡大 DPI={dpi}: {string.Join(",", rowHeights)}");
         var controls = new List<Control>(screen.Numbers);
-        controls.AddRange(new[] { "search", "targets", "refresh", "alwaysOnTop", "maximize", "autoRead", "autoApply", "allowOutside", "apply", "undo" }
-            .Select(screen.Control<Control>));
+        controls.AddRange(new Control[] { screen.Form.search, screen.Form.targets, screen.Form.refresh, screen.Form.alwaysOnTop, screen.Form.maximize,
+            screen.Form.autoRead, screen.Form.autoApply, screen.Form.allowOutside, screen.Form.apply, screen.Form.undo });
         var rectangles = new List<(Control Control, Rectangle Bounds)>();
         foreach (var control in controls)
         {
@@ -502,12 +502,11 @@ public static class UiTests
             rectangles.Add((control, bounds));
         }
 
-        True(!screen.Control<Panel>("previewArea").Visible, "初期状態ではプレビューを折りたたむ");
-        var apply = screen.Control<Button>("apply");
-        var outside = screen.Control<CheckBox>("allowOutside");
+        True(!screen.Form.previewArea.Visible, "初期状態ではプレビューを折りたたむ");
+        var apply = screen.Form.apply;
+        var outside = screen.Form.allowOutside;
         True(apply.Right < outside.Left, "画面外可は適用ボタンの右に配置");
-        var actionNames = new[] { "maximize", "autoRead", "autoApply", "apply", "allowOutside", "undo" };
-        var actionControls = actionNames.Select(screen.Control<Control>).ToArray();
+        var actionControls = new Control[] { screen.Form.maximize, screen.Form.autoRead, screen.Form.autoApply, screen.Form.apply, screen.Form.allowOutside, screen.Form.undo };
         var centers = actionControls.Select(control => control.Top * 2 + control.Height).ToArray();
         True(centers.Max() - centers.Min() <= 2, "操作行のボタンとチェックボックスの縦中心を1px以内に揃える");
         Console.WriteLine($"配置実測 DPI={screen.Form.DeviceDpi}: " + string.Join(", ", actionControls.Select(control => $"{control.Text} Y={control.Top} H={control.Height}")));
@@ -528,12 +527,12 @@ public static class UiTests
         screen.Select(0);
         var observed = new WindowBounds(200, 100, 500, 340);
         screen.Service.UpdateFirst(observed);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.Service.UpdateFirst(new WindowBounds(300, 150, 500, 340));
 
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal(observed, screen.Service.GetState(FakeWindows.First)!.Bounds, "未観測の変更の直前へUndo");
-        Equal(1, screen.Control<WindowHistory>("history").Count, "さらに前の履歴を保持");
+        Equal(1, screen.Form.history.Count, "さらに前の履歴を保持");
         Equal(1, screen.Service.Mutations, "Undoを一度だけ送信");
     }
 
@@ -545,23 +544,23 @@ public static class UiTests
         var snapped = new WindowBounds(0, 0, 960, 1040);
         var beforeSnap = screen.Service.GetState(FakeWindows.First)!.Bounds;
         screen.Service.SetFirst(screen.Service.GetState(FakeWindows.First)! with { Bounds = snapped });
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.Service.UpdateFirst(new WindowBounds(400, 300, 500, 340));
-        screen.Invoke("RefreshState", false);
-        Equal(2, screen.Control<WindowHistory>("history").Count, "スナップと移動を履歴へ記録");
+        screen.Form.RefreshState(false);
+        Equal(2, screen.Form.history.Count, "スナップと移動を履歴へ記録");
 
         screen.Service.RestorePlacementOnly = true;
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal(beforeSnap, screen.Service.GetState(FakeWindows.First)!.Bounds, "通常復元位置だけを戻す実装を再現");
-        True(screen.Control<Label>("status").Text.StartsWith("変更できません", StringComparison.Ordinal), "見える位置が違えば成功と表示しない");
-        Equal(2, screen.Control<WindowHistory>("history").Count, "失敗したUndoは履歴を消費しない");
+        True(screen.Form.status.Text.StartsWith("変更できません", StringComparison.Ordinal), "見える位置が違えば成功と表示しない");
+        Equal(2, screen.Form.history.Count, "失敗したUndoは履歴を消費しない");
 
         // 失敗したUndoで動いた位置を履歴へ入れないよう、移動後の状態へ戻してから再実行する。
         screen.Service.UpdateFirst(new WindowBounds(400, 300, 500, 340));
         screen.Service.RestorePlacementOnly = false;
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal(snapped, screen.Service.GetState(FakeWindows.First)!.Bounds, "スナップ中の見える位置へ戻す");
-        Equal("直前の状態に戻しました。", screen.Control<Label>("status").Text, "成功を表示");
+        Equal("直前の状態に戻しました。", screen.Form.status.Text, "成功を表示");
     }
 
     private static void AutoConstrainAsOneStep()
@@ -570,14 +569,14 @@ public static class UiTests
         screen.Select(0);
         var initial = screen.Service.GetState(FakeWindows.First)!.Bounds;
         screen.Service.UpdateFirst(new WindowBounds(-150, 80, 500, 340));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.AwaitIdle();
         Equal(new WindowBounds(0, 80, 500, 340), screen.Service.GetState(FakeWindows.First)!.Bounds, "外部移動を作業領域へ補正");
-        Equal(1, screen.Control<WindowHistory>("history").Count, "外部移動と補正を一手として保持");
+        Equal(1, screen.Form.history.Count, "外部移動と補正を一手として保持");
 
-        screen.Await(screen.InvokeTask("UndoAsync"));
+        screen.Await(screen.Form.UndoAsync());
         Equal(initial, screen.Service.GetState(FakeWindows.First)!.Bounds, "補正前の画面外位置を経ずに元へ戻る");
-        Equal(0, screen.Control<WindowHistory>("history").Count, "1回のUndoで履歴を消費");
+        Equal(0, screen.Form.history.Count, "1回のUndoで履歴を消費");
     }
 
     private static void AutoConstrainRetry()
@@ -587,19 +586,19 @@ public static class UiTests
         screen.Service.RejectApplyBounds = true;
         var outside = new WindowBounds(-150, 80, 500, 340);
         screen.Service.UpdateFirst(outside);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.AwaitIdle();
         Equal(1, screen.Service.Mutations, "最初の自動補正を試す");
         for (int index = 0; index < 10; index++)
         {
-            screen.Invoke("RefreshState", false);
+            screen.Form.RefreshState(false);
         }
 
         Equal(1, screen.Service.Mutations, "応答しない同一状態へ補正を連続送信しない");
         screen.Service.UpdateFirst(new WindowBounds(120, 80, 500, 340));
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.Service.UpdateFirst(outside);
-        screen.Invoke("RefreshState", false);
+        screen.Form.RefreshState(false);
         screen.AwaitIdle();
         Equal(2, screen.Service.Mutations, "状態が変わった後の新しい画面外移動は補正を再試行");
     }
@@ -608,9 +607,9 @@ public static class UiTests
     {
         using var screen = new TestScreen();
         screen.Select(0);
-        screen.Control<CheckBox>("autoApply").Checked = false;
+        screen.Form.autoApply.Checked = false;
         screen.Numbers[0].Value = 250;
-        var mutation = screen.InvokeTask("ApplyAsync");
+        var mutation = screen.Form.ApplyAsync();
         True(!mutation.IsCompleted, "変更の安定を非同期に待っている");
         int callsBeforeClose = screen.Service.StateReads;
         screen.Form.Close();
@@ -648,8 +647,8 @@ public static class UiTests
         public FakeWindows Service { get; } = new();
         public FakePicker Picker { get; } = new();
         public MainForm Form { get; }
-        public ComboBox Targets => Control<ComboBox>("targets");
-        public NumericUpDown[] Numbers => Control<NumericUpDown[]>("numbers");
+        public ComboBox Targets => Form.targets;
+        public NumericUpDown[] Numbers => Form.numbers;
 
         public TestScreen()
         {
@@ -663,33 +662,15 @@ public static class UiTests
             StopTimers();
         }
 
-        public T Control<T>(string name) =>
-            (T)(typeof(MainForm).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(Form)
-                ?? throw new InvalidOperationException($"画面フィールドが見つかりません: {name}"));
-
-        public void Invoke(string name, params object[] arguments)
-        {
-            var method = typeof(MainForm).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)
-                ?? throw new InvalidOperationException($"画面処理が見つかりません: {name}");
-            method.Invoke(Form, arguments);
-        }
-
-        public Task InvokeTask(string name)
-        {
-            var method = typeof(MainForm).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)
-                ?? throw new InvalidOperationException($"画面処理が見つかりません: {name}");
-            return (Task)(method.Invoke(Form, []) ?? throw new InvalidOperationException($"Taskが返されません: {name}"));
-        }
-
         public void Await(Task task)
         {
             PumpUntil(() => task.IsCompleted);
             task.GetAwaiter().GetResult();
         }
 
-        public void AwaitIdle() => PumpUntil(() => !Control<bool>("busy"));
+        public void AwaitIdle() => PumpUntil(() => !Form.busy);
 
-        public void AwaitMutations(int count) => PumpUntil(() => Service.Mutations >= count && !Control<bool>("busy"));
+        public void AwaitMutations(int count) => PumpUntil(() => Service.Mutations >= count && !Form.busy);
 
         public void PumpFor(int milliseconds)
         {
@@ -714,7 +695,7 @@ public static class UiTests
             {
                 if (watch.ElapsedMilliseconds > 4000)
                 {
-                    throw new TimeoutException($"画面処理の完了を4秒待っても応答がありません。反映={Service.Mutations}, busy={Control<bool>("busy")}, dirty={Control<bool>("dirty")}, タイマー={Control<System.Windows.Forms.Timer>("editDelay").Enabled}, 状態={Control<Label>("status").Text}");
+                    throw new TimeoutException($"画面処理の完了を4秒待っても応答がありません。反映={Service.Mutations}, busy={Form.busy}, dirty={Form.dirty}, タイマー={Form.editDelay.Enabled}, 状態={Form.status.Text}");
                 }
 
                 Application.DoEvents();
@@ -731,9 +712,9 @@ public static class UiTests
 
         public void StopTimers()
         {
-            foreach (string name in new[] { "poll", "filterDelay", "editDelay" })
+            foreach (var timer in new[] { Form.poll, Form.filterDelay, Form.editDelay })
             {
-                Control<System.Windows.Forms.Timer>(name).Stop();
+                timer.Stop();
             }
         }
 

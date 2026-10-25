@@ -1,5 +1,4 @@
 using System.IO.Pipes;
-using System.Reflection;
 using KotorinToys.Integration;
 
 namespace ChunapTool.Tests;
@@ -14,17 +13,11 @@ internal static class ManagementTests
             try
             {
                 using var window = new ChunapTool.MainForm(new ChunapTool.Native.NativeWindowService(), passive: true);
-                const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
-                var reason = window.GetType().GetProperty("ManagementStopBlockReason", hidden)!;
-                if (reason.GetValue(window) is not null) throw new Exception("待機中の停止が拒否されました。");
-                foreach (var name in new[] { "busy" })
-                {
-                    var flag = window.GetType().GetField(name, hidden)!;
-                    flag.SetValue(window, true);
-                    if (reason.GetValue(window) is not string { Length: > 0 }) throw new Exception(name + "中の管理停止を拒否しませんでした。");
-                    flag.SetValue(window, false);
-                }
-                if (window.Visible || reason.GetValue(window) is not null) throw new Exception("検証後の状態が不正です。");
+                if (window.ManagementStopBlockReason is not null) throw new Exception("待機中の停止が拒否されました。");
+                window.busy = true;
+                if (window.ManagementStopBlockReason is not { Length: > 0 }) throw new Exception("busy中の管理停止を拒否しませんでした。");
+                window.busy = false;
+                if (window.Visible || window.ManagementStopBlockReason is not null) throw new Exception("検証後の状態が不正です。");
             }
             catch (Exception error) { failure = error; }
         });

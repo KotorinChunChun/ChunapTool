@@ -162,7 +162,7 @@ internal static class ThumbnailTests
         True(screen.Grid.Controls[0].Height > 400);
         for (uint id = 3; id <= 8; id++)
             screen.Windows.Entries.Add(new WindowEntry(new WindowIdentity(0, id), $"候補ウィンドウ {id}", "test.exe"));
-        screen.Invoke("RefreshEntries");
+        screen.Form.RefreshEntries();
         Equal(8, screen.Grid.Controls.Count);
         var cards = screen.Grid.Controls.Cast<ThumbnailCard>().ToArray();
         Equal(First.Title, cards[0].AccessibleName);
@@ -180,14 +180,14 @@ internal static class ThumbnailTests
         Equal(2, screen.Windows.Enumerations);
         screen.Search.Text = "なし";
         Equal(0, screen.Grid.Controls.Count);
-        True(screen.Field<Label>("count").Text.Contains("ありません", StringComparison.Ordinal));
+        True(screen.Form.count.Text.Contains("ありません", StringComparison.Ordinal));
         Equal(0, screen.Capture.Calls.Count);
         var output = Environment.GetEnvironmentVariable("CHUNAPTOOL_TEST_OUTPUT");
         if (!string.IsNullOrWhiteSpace(output))
         {
             screen.Form.ClientSize = new Size(1000, 680);
             screen.Search.Clear();
-            for (int i = 0; i < screen.Grid.Controls.Count; i++) Await((Task)screen.Invoke("RefreshOneAsync")!);
+            for (int i = 0; i < screen.Grid.Controls.Count; i++) Await(screen.Form.RefreshOneAsync());
             using var render = new Bitmap(screen.Form.Width, screen.Form.Height);
             screen.Form.DrawToBitmap(render, new Rectangle(Point.Empty, render.Size));
             Directory.CreateDirectory(output);
@@ -199,7 +199,7 @@ internal static class ThumbnailTests
     {
         using var screen = new PickerScreen();
         screen.Search.Text = "Beta";
-        screen.Invoke("SelectEntry", Second);
+        screen.Form.SelectEntry(Second);
         Equal(DialogResult.OK, screen.Form.DialogResult);
         Equal(Second, screen.Form.SelectedEntry);
         True(screen.Capture.Disposed);
@@ -211,7 +211,7 @@ internal static class ThumbnailTests
         using (var screen = new PickerScreen())
         {
             screen.Windows.Entries.Remove(Second);
-            screen.Invoke("SelectEntry", Second);
+            screen.Form.SelectEntry(Second);
             True(screen.Form.SelectedEntry is null && !screen.Form.IsDisposed);
             Equal(1, screen.Grid.Controls.Count);
             typeof(Form).GetMethod("ProcessDialogKey", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -225,7 +225,7 @@ internal static class ThumbnailTests
     private static void PickerCloseDuringCapture()
     {
         using var screen = new PickerScreen(block: true);
-        var task = (Task)screen.Invoke("RefreshOneAsync")!;
+        var task = screen.Form.RefreshOneAsync();
         True(!task.IsCompleted);
         screen.Form.Close();
         var bitmap = screen.Capture.Complete();
@@ -259,19 +259,17 @@ internal static class ThumbnailTests
         internal FakeWindows Windows { get; } = new();
         internal FakeCapture Capture { get; }
         internal ThumbnailPickerForm Form { get; }
-        internal TableLayoutPanel Grid => Field<TableLayoutPanel>("grid");
-        internal TextBox Search => Field<TextBox>("search");
+        internal TableLayoutPanel Grid => Form.grid;
+        internal TextBox Search => Form.search;
         internal PickerScreen(bool block = false)
         {
             Capture = new FakeCapture { Block = block };
             Form = new ThumbnailPickerForm(Windows, Capture, First.Identity, "", passive: true);
             True(Form.Opacity == 0 && !Form.TopMost && !Form.ShowInTaskbar);
             Form.Show(); Application.DoEvents();
-            Field<System.Windows.Forms.Timer>("captureTimer").Stop();
-            Field<System.Windows.Forms.Timer>("catalogTimer").Stop();
+            Form.captureTimer.Stop();
+            Form.catalogTimer.Stop();
         }
-        internal T Field<T>(string name) => (T)typeof(ThumbnailPickerForm).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Form)!;
-        internal object? Invoke(string name, params object[] arguments) => typeof(ThumbnailPickerForm).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(Form, arguments);
         public void Dispose() { Form.Close(); Form.Dispose(); Application.DoEvents(); }
     }
 

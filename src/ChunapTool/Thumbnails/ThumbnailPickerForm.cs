@@ -9,13 +9,13 @@ internal sealed class ThumbnailPickerForm : BrandedForm
     private readonly WindowIdentity? current;
     private readonly bool passive;
     private readonly CancellationTokenSource lifetime = new();
-    private readonly TextBox search = new() { Dock = DockStyle.Fill, AccessibleName = "サムネイル検索", PlaceholderText = "タイトルまたは実行ファイル名" };
+    internal readonly TextBox search = new() { Dock = DockStyle.Fill, AccessibleName = "サムネイル検索", PlaceholderText = "タイトルまたは実行ファイル名" };
     private readonly Button close = new() { Text = "閉じる", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0), DialogResult = DialogResult.Cancel };
-    private readonly Label count = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
+    internal readonly Label count = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
     private readonly Panel viewport = new() { Dock = DockStyle.Fill, AutoScroll = true };
-    private readonly TableLayoutPanel grid = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
-    private readonly System.Windows.Forms.Timer captureTimer = new() { Interval = 100 };
-    private readonly System.Windows.Forms.Timer catalogTimer = new() { Interval = 2000 };
+    internal readonly TableLayoutPanel grid = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
+    internal readonly System.Windows.Forms.Timer captureTimer = new() { Interval = 100 };
+    internal readonly System.Windows.Forms.Timer catalogTimer = new() { Interval = 2000 };
     private readonly ToolTip tooltip = new() { ShowAlways = true, InitialDelay = 500, ReshowDelay = 100, AutoPopDelay = 10000 };
     private IReadOnlyList<ThumbnailTile> filtered = [];
     private Task? refreshTask;
@@ -68,7 +68,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         FormClosed += (_, _) => Stop();
     }
 
-    private void RefreshEntries()
+    internal void RefreshEntries()
     {
         if (stopped) return;
         try
@@ -137,7 +137,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         finally { grid.ResumeLayout(true); }
     }
 
-    private async Task RefreshOneAsync()
+    internal async Task RefreshOneAsync()
     {
         if (stopped) return;
         var visible = grid.Controls.Cast<ThumbnailCard>()
@@ -150,7 +150,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
             if (card.Tile.Entry.Identity == updated) { card.Invalidate(); break; }
     }
 
-    private void SelectEntry(WindowEntry entry)
+    internal void SelectEntry(WindowEntry entry)
     {
         if (stopped) return;
         try
