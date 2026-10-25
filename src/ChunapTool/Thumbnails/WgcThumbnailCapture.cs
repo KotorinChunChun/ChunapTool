@@ -13,7 +13,13 @@ internal sealed class WgcThumbnailCapture : IThumbnailCapture
 {
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim singleCapture = new(1, 1);
+    // D3D11デバイスと読出し用テクスチャは撮影ごとに作らず、この取得器の寿命の間で使い回す。
+    private readonly object gate = new();
+    private CaptureDirect3D? graphics;
+    private bool capturing;
     private bool disposed;
+
+    internal int DeviceCreations { get; private set; }
 
     public async Task<ThumbnailCaptureResult> CaptureAsync(WindowIdentity target, Size maximumSize, CancellationToken cancellationToken)
     {
@@ -27,7 +33,7 @@ internal sealed class WgcThumbnailCapture : IThumbnailCapture
         finally { singleCapture.Release(); }
     }
 
-    private static ThumbnailCaptureResult Capture(WindowIdentity target, Size maximumSize, CancellationToken token)
+    private ThumbnailCaptureResult Capture(WindowIdentity target, Size maximumSize, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (maximumSize.Width < 1 || maximumSize.Height < 1) throw new ArgumentOutOfRangeException(nameof(maximumSize));
@@ -42,7 +48,7 @@ internal sealed class WgcThumbnailCapture : IThumbnailCapture
             var item = CaptureDirect3D.CreateWindowItem(target.Handle);
             ValidateSize(item.Size.Width, item.Size.Height);
             token.ThrowIfCancellationRequested();
-            using var graphics = new CaptureDirect3D();
+            var graphics = AcquireDevice();
             using var pool = Direct3D11CaptureFramePool.CreateFreeThreaded(graphics.ProjectedDevice,
                 DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
             using var session = pool.CreateCaptureSession(item);
@@ -79,7 +85,50 @@ internal sealed class WgcThumbnailCapture : IThumbnailCapture
             }
             return new(null, "取得待ちがタイムアウトしました");
         }
-        finally { RoUninitialize(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // デバイス消失などで同じデバイスを使えなくなった場合に備え、次回は作り直す。
+            DiscardDevice();
+            throw;
+        }
+        finally { ReleaseDevice(); RoUninitialize(); }
+    }
+
+    private CaptureDirect3D AcquireDevice()
+    {
+        lock (gate)
+        {
+            if (disposed) throw new OperationCanceledException();
+            capturing = true;
+            if (graphics is not null) return graphics;
+        }
+        var created = new CaptureDirect3D();
+        lock (gate)
+        {
+            graphics = created;
+            DeviceCreations++;
+        }
+        return created;
+    }
+
+    private void DiscardDevice()
+    {
+        CaptureDirect3D? discarded;
+        lock (gate) { discarded = graphics; graphics = null; }
+        discarded?.Dispose();
+    }
+
+    // 撮影中に破棄された場合は、撮影側が終わった時点でデバイスを解放する。
+    private void ReleaseDevice()
+    {
+        CaptureDirect3D? released = null;
+        lock (gate)
+        {
+            if (!capturing) return;
+            capturing = false;
+            if (disposed) { released = graphics; graphics = null; }
+        }
+        released?.Dispose();
     }
 
     private static void ValidateSize(int width, int height)
@@ -90,11 +139,17 @@ internal sealed class WgcThumbnailCapture : IThumbnailCapture
 
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
+        CaptureDirect3D? released = null;
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true;
+            if (!capturing) { released = graphics; graphics = null; }
+        }
         lifetime.Cancel();
         lifetime.Dispose();
-        // 撮影途中でもUIを待たせない。取得側のusingがGPU・セッション・フレームを解放する。
+        // 撮影途中でもUIを待たせない。撮影中のデバイスは撮影側が終了時に解放する。
+        released?.Dispose();
     }
 
     [DllImport("combase.dll")] private static extern int RoInitialize(uint type);
