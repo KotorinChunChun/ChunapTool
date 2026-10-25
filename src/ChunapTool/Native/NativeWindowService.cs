@@ -186,7 +186,8 @@ public sealed class NativeWindowService : IWindowService
         }
     }
 
-    private static string GetProcessName(uint processId)
+    // 一覧とドラッグ選択で同じ表示名にするため、実行ファイル名を共通の方法で取得する。
+    internal static string GetProcessName(uint processId)
     {
         using var process = NativeMethods.OpenProcess(0x1000, false, processId);
         if (process.IsInvalid)

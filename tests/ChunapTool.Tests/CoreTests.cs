@@ -37,6 +37,7 @@ internal static class CoreTests
             ("最小化した別対象への切替も旧履歴を消去", HistorySwitchToMinimized),
             ("別対象のUndo結果は旧履歴と混在させない", HistoryAcceptDifferentTarget),
             ("最小化状態ではUndoの成功を確定しない", HistoryRejectMinimizedUndo),
+            ("一覧とドラッグ選択で同じ方法により実行ファイル名を得る", ProcessNameFromImage),
         ];
 
         int failures = 0;
@@ -352,6 +353,12 @@ internal static class CoreTests
         history.AcceptUndo(State(-32000, 2));
         Equal(1, history.Count);
         Equal(State(10), history.Current);
+    }
+
+    private static void ProcessNameFromImage()
+    {
+        Equal(Path.GetFileName(Environment.ProcessPath), ChunapTool.Native.NativeWindowService.GetProcessName((uint)Environment.ProcessId));
+        Equal("不明", ChunapTool.Native.NativeWindowService.GetProcessName(0));
     }
 
     private static WindowHistory Start(WindowState? initial = null)

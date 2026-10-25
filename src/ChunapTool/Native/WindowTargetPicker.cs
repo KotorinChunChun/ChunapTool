@@ -1,5 +1,4 @@
 using ChunapTool.Core;
-using System.Diagnostics;
 using System.Text;
 
 namespace ChunapTool.Native;
@@ -20,10 +19,6 @@ internal sealed class WindowTargetPicker : IWindowTargetPicker
         if (string.IsNullOrWhiteSpace(title.ToString())) return null;
         var identity = new WindowIdentity(window, processId);
         if (!NativeWindowService.Matches(identity)) return null;
-        string name;
-        try { using var process = Process.GetProcessById((int)processId); name = process.ProcessName + ".exe"; }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        { name = "不明"; }
-        return new WindowEntry(identity, title.ToString(), name);
+        return new WindowEntry(identity, title.ToString(), NativeWindowService.GetProcessName(processId));
     }
 }
