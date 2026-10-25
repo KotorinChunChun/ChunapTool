@@ -38,6 +38,9 @@ internal static class WgcSmokeTests
                 Console.WriteLine($"成功: サイズ変更後のWGC静止画 {image.Width}x{image.Height}");
                 passed++;
             }
+            if (capture.DeviceCreations != 1) throw new InvalidOperationException($"撮影ごとにD3D11デバイスを作り直しています: {capture.DeviceCreations}回");
+            Console.WriteLine("成功: 2回の撮影でD3D11デバイスを1回だけ作成");
+            passed++;
             using (var result = Await(capture.CaptureAsync(identity with { ProcessId = identity.ProcessId + 1 }, new Size(320, 200), CancellationToken.None)))
             {
                 if (result.Image is not null || !result.Status.Contains("終了", StringComparison.Ordinal)) throw new InvalidOperationException("PID不一致を拒否しませんでした。");
@@ -57,10 +60,10 @@ internal static class WgcSmokeTests
                 Console.WriteLine("成功: 対象終了後の撮影拒否");
                 passed++;
             }
-            Console.WriteLine($"WGC実取得検証: {passed}/5 成功。背面・非アクティブの専用フォームのみ。他アプリへの入力なし。");
+            Console.WriteLine($"WGC実取得検証: {passed}/6 成功。背面・非アクティブの専用フォームのみ。他アプリへの入力なし。");
             return 0;
         }
-        catch (Exception ex) { Console.Error.WriteLine($"WGC実取得検証失敗（{passed}/5成功）:\n{ex}"); return 1; }
+        catch (Exception ex) { Console.Error.WriteLine($"WGC実取得検証失敗（{passed}/6成功）:\n{ex}"); return 1; }
         finally { target.Close(); }
     }
 

@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # 実ウィンドウを操作する-Nativeと、WGC実取得検証は対話デスクトップ専用のため実行しない。
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: 単体・管理連携の検証
+        shell: pwsh
+        run: ./dev/scripts/test.ps1
+      - name: 不可視画面の回帰検証
+        shell: pwsh
+        run: ./dev/scripts/test.ps1 -Ui

@@ -8,6 +8,8 @@ public sealed record WindowPlacement(uint Flags, uint ShowCommand, WindowPoint M
     WindowPoint MaxPosition, WindowBounds NormalBounds);
 public sealed record WindowState(WindowIdentity Target, WindowBounds Bounds, WindowPlacement Placement, bool CanMaximize)
 {
+    // 透明なリサイズ枠を含むGetWindowRectの外枠。スナップ中など通常復元位置と実位置が異なる状態の復元に使う。
+    public WindowBounds? OuterBounds { get; init; }
     public bool IsMaximized => Placement.ShowCommand == 3;
     public bool IsMinimized => Placement.ShowCommand is 2 or 6 or 7 or 11;
 }

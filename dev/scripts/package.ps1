@@ -49,7 +49,7 @@ ZIPをすべて展開し、ChunapTool.exeを起動してください。
 
 詳しい操作は「利用ガイド.md」を参照してください。
 未署名の配布物です。SHA256SUMS.txtでZIPのハッシュを照合できます。
-KotorinToys本体からの正式インストール・更新には未対応です。
+インストーラー版とKotorinToys本体からの導入はGitHub Releasesのsetupを使用してください。
 "@ | Set-Content -LiteralPath (Join-Path $publishDirectory 'はじめに.txt') -Encoding utf8
 $archive = Join-Path $runDirectory "ChunapTool-$version-win-x64.zip"
 Compress-Archive -LiteralPath $publishDirectory -DestinationPath $archive -CompressionLevel Optimal
