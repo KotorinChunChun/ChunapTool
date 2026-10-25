@@ -36,6 +36,8 @@ internal static class ManagementTests
         Console.WriteLine("PASS 管理連携: 整数でない期待PIDと長すぎる要求を例外なく拒否");
         EndpointSurvivesInvalidRequests();
         Console.WriteLine("PASS 管理連携: 不正な要求の後も受付を継続");
+        ExistingInstance();
+        Console.WriteLine("PASS 管理連携: 二重起動で既存画面を表示し、表示できない理由を返す");
     }
 
     private static void RequestParsing()
@@ -61,6 +63,7 @@ internal static class ManagementTests
         // 製品の管理名と衝突しない検証専用IDで、この検証プロセス内の受付だけを使う。
         var id = "chunap-tool-test-" + Guid.NewGuid().ToString("N");
         using var started = new ManualResetEventSlim();
+        int shows = 0;
         Control? dispatcher = null;
         ManagementEndpoint? endpoint = null;
         var thread = new Thread(() =>
@@ -68,7 +71,7 @@ internal static class ManagementTests
             using var context = new ApplicationContext();
             dispatcher = new Control();
             _ = dispatcher.Handle;
-            endpoint = new ManagementEndpoint(id, dispatcher, () => { }, () => { });
+            endpoint = new ManagementEndpoint(id, dispatcher, () => shows++, () => { });
             dispatcher.HandleDestroyed += (_, _) => context.ExitThread();
             started.Set();
             Application.Run(context);
@@ -84,6 +87,9 @@ internal static class ManagementTests
             Contains("\"result\":\"completed\"", Send(id, "status"), "長すぎる要求の後も受付を継続");
             _ = TrySend(id, "{\"command\":");
             Contains("\"result\":\"completed\"", Send(id, "status"), "壊れたJSONの後も受付を継続");
+            // 同じ実行ファイルの既存インスタンス（ここでは検証プロセス自身）は前面化し、理由を返さない。
+            Equal<string?>(null, ManagementEndpoint.ShowExisting(id), "同じ実行ファイルの既存画面を表示");
+            Equal(1, Volatile.Read(ref shows), "既存画面の表示要求を1回だけ送る");
         }
         finally
         {
@@ -91,6 +97,20 @@ internal static class ManagementTests
             dispatcher?.BeginInvoke(new Action(() => dispatcher.Dispose()));
             thread.Join(TimeSpan.FromSeconds(5));
         }
+    }
+
+    private static void ExistingInstance()
+    {
+        var own = Environment.ProcessPath;
+        Equal<string?>(null, ManagementEndpoint.ExistingInstanceProblem(true, own, own), "同じ場所の実行ファイル");
+        Equal<string?>(null, ManagementEndpoint.ExistingInstanceProblem(true, own?.ToUpperInvariant(), own), "大文字小文字だけが違う場所");
+        var other = ManagementEndpoint.ExistingInstanceProblem(true, @"C:\Portable\ChunapTool.exe", own) ?? "";
+        Contains("別の場所", other, "別の場所の実行ファイルは理由を返す");
+        Contains(@"C:\Portable\ChunapTool.exe", other, "起動中の場所を示す");
+        Contains("不明", ManagementEndpoint.ExistingInstanceProblem(true, null, own) ?? "", "起動中の場所を取得できない場合");
+        Contains("セッション", ManagementEndpoint.ExistingInstanceProblem(false, own, own) ?? "", "別セッション");
+        var missing = ManagementEndpoint.ShowExisting("chunap-tool-test-missing-" + Guid.NewGuid().ToString("N")) ?? "";
+        Contains("応答しません", missing, "受付のない既存インスタンスは理由を返す");
     }
 
     private static string Send(string id, string request) =>

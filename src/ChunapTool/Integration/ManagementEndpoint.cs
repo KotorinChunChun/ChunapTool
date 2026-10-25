@@ -127,7 +127,8 @@ internal sealed class ManagementEndpoint : IDisposable
         return (command, requestId, expectedPid);
     }
 
-    public static void ShowExisting(string id)
+    // 既存画面を表示できたときはnull、できなかったときは利用者へ伝える理由を返す。
+    public static string? ShowExisting(string id)
     {
         try
         {
@@ -140,17 +141,37 @@ internal sealed class ManagementEndpoint : IDisposable
             using var response = JsonDocument.Parse(line ?? "");
             var pid = response.RootElement.GetProperty("pid").GetInt32();
             using var process = Process.GetProcessById(pid);
-            if (process.SessionId != Process.GetCurrentProcess().SessionId ||
-                !string.Equals(process.MainModule?.FileName, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)) return;
+            var problem = ExistingInstanceProblem(process.SessionId == Process.GetCurrentProcess().SessionId,
+                process.MainModule?.FileName, Environment.ProcessPath);
+            if (problem is not null) return problem;
             AllowSetForegroundWindow(pid);
             using var showPipe = new NamedPipeClientStream(".", PipeName(id), PipeDirection.InOut, PipeOptions.CurrentUserOnly);
             showPipe.Connect(1200);
-            using var showWriter = new StreamWriter(showPipe) { AutoFlush = true };
+            // 読み書きの後始末でpipeを閉じる順序に依存しないよう、pipe自体の破棄はusingに任せる。
+            using var showWriter = new StreamWriter(showPipe, leaveOpen: true) { AutoFlush = true };
             showWriter.WriteLine(JsonSerializer.Serialize(new { command = "show", expectedPid = pid }));
-            using var showReader = new StreamReader(showPipe);
-            _ = showReader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+            using var showReader = new StreamReader(showPipe, leaveOpen: true);
+            var shown = showReader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+            using var showResponse = JsonDocument.Parse(shown ?? "");
+            var result = showResponse.RootElement.GetProperty("result").GetString();
+            return result == "completed" ? null
+                : "起動中の画面を表示できませんでした。" + (showResponse.RootElement.TryGetProperty("detail", out var detail) ? detail.GetString() : "");
         }
-        catch (Exception ex) when (ex is IOException or TimeoutException or JsonException or InvalidOperationException or ArgumentException or KeyNotFoundException or System.ComponentModel.Win32Exception) { }
+        catch (Exception ex) when (ex is IOException or TimeoutException or JsonException or InvalidOperationException or ArgumentException
+            or KeyNotFoundException or FormatException or System.ComponentModel.Win32Exception)
+        {
+            return "起動中の同じツールが応答しません。タスクマネージャーで終了してから、起動し直してください。";
+        }
     }
+
+    // 実行ファイルが別の場所（ポータブル版とインストール版など）なら前面化せず、その旨を返す。
+    internal static string? ExistingInstanceProblem(bool sameSession, string? runningPath, string? ownPath)
+    {
+        if (!sameSession) return "別のサインインセッションで同じツールが起動中です。";
+        if (runningPath is not null && string.Equals(runningPath, ownPath, StringComparison.OrdinalIgnoreCase)) return null;
+        return "別の場所から起動した同じツールが実行中です。起動中のものを終了してから、起動し直してください。\n\n"
+            + $"起動中: {runningPath ?? "不明"}\n今回: {ownPath ?? "不明"}";
+    }
+
     public void Dispose() => lifetime.Cancel();
 }
