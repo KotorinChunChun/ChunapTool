@@ -14,25 +14,28 @@ public sealed class MainForm : BrandedForm
     private bool picking;
     private WindowEntry? pickedCandidate;
     private bool previewExpanded;
-    private int expandedPreviewHeight = 294;
+    // 折りたたみ時の最小サイズはDPI自動拡大の結果をそのまま使い、展開時はこの96DPI基準の差分だけ増減する。
+    private const int PreviewMinimumHeight = 420 - 255;
+    private const int DefaultPreviewHeight = 294;
+    private int? expandedPreviewHeight;
     private TableLayoutPanel layout = null!;
-    private readonly Button targetPickerButton = new() { Text = "⌖", AutoSize = true, AccessibleName = "対象をドラッグして選択", Width = 38 };
-    private readonly Button previewToggle = new() { Text = "▼", AutoSize = true, AccessibleName = "プレビューを表示", Width = 32 };
-    private readonly Button thumbnailSelect = new() { Text = "サムネイル選択", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly Button targetPickerButton = new() { Text = "⌖", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AccessibleName = "対象をドラッグして選択", MinimumSize = new Size(38, 0) };
+    private readonly Button previewToggle = new() { Text = "▼", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AccessibleName = "プレビューを表示", MinimumSize = new Size(32, 0) };
+    private readonly Button thumbnailSelect = new() { Text = "サムネイル選択", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0), Anchor = AnchorStyles.Left };
     private ThumbnailPickerForm? thumbnailPicker;
     private readonly WindowHistory history = new();
     private readonly DwmPreview preview = new();
     private readonly ToolTip tooltip = new() { ShowAlways = true, InitialDelay = 500, ReshowDelay = 100, AutoPopDelay = 10000 };
     private readonly TextBox search = new() { Dock = DockStyle.Fill, PlaceholderText = "タイトルまたは実行ファイル名", AccessibleName = "検索" };
     private readonly ComboBox targets = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "対象ウィンドウ", DropDownWidth = 800 };
-    private readonly Button refresh = new() { Text = "更新", AutoSize = true };
+    private readonly Button refresh = new() { Text = "更新", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
     private readonly CheckBox autoRead = new() { Text = "自動読み取り", Checked = true, AutoSize = true };
     private readonly CheckBox autoApply = new() { Text = "自動反映", Checked = true, AutoSize = true };
     private readonly CheckBox allowOutside = new() { Text = "画面外可", AutoSize = true };
     private readonly CheckBox maximize = new() { Text = "最大化", Appearance = Appearance.Button, AutoSize = true };
     private readonly CheckBox alwaysOnTop = new() { Text = "最前面", Checked = true, AutoSize = true };
-    private readonly Button apply = new() { Text = "適用", AutoSize = true };
-    private readonly Button undo = new() { Text = "戻す", AutoSize = true };
+    private readonly Button apply = new() { Text = "適用", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
+    private readonly Button undo = new() { Text = "戻す", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
     private readonly NumericUpDown[] numbers = Enumerable.Range(0, 4).Select(i => new NumericUpDown
     {
         Minimum = i < 2 ? -1000000 : 32, Maximum = 1000000, Width = 110,
@@ -61,15 +64,21 @@ public sealed class MainForm : BrandedForm
         windows = windowService;
         this.passive = passive;
         this.targetPicker = targetPicker ?? new WindowTargetPicker();
+        // DPIの自動拡大はレイアウト再開時に行われるため、構築全体を一時停止で囲む。
+        SuspendLayout();
         Text = WindowTitle.Create();
         Font = new Font("Yu Gothic UI", 10);
         AutoScaleMode = AutoScaleMode.Dpi;
+        // 以下のサイズと行・列の幅は96DPI基準。基準DPIを指定しないと自動拡大されず、125%などで文字だけが大きくなる。
+        AutoScaleDimensions = new SizeF(96F, 96F);
         ClientSize = new Size(820, 216);
         MinimumSize = new Size(780, 255);
         StartPosition = FormStartPosition.CenterScreen;
         TopMost = !passive;
         if (passive) { Opacity = 0; ShowInTaskbar = false; }
         BuildLayout();
+        ResumeLayout(false);
+        PerformLayout();
         ConfigureTooltips();
         search.TextChanged += (_, _) => ApplyTargetFilter();
         filterDelay.Tick += (_, _) => { filterDelay.Stop(); RefreshTargets(); };
@@ -565,21 +574,22 @@ public sealed class MainForm : BrandedForm
         {
             if (!previewExpanded)
             {
-                expandedPreviewHeight = Math.Max(150, layout.GetRowHeights()[4]);
+                expandedPreviewHeight = Math.Max(150 * DeviceDpi / 96, layout.GetRowHeights()[4]);
                 preview.Clear();
                 previewArea.Visible = false;
                 layout.RowStyles[4].SizeType = SizeType.Absolute;
                 layout.RowStyles[4].Height = 0;
-                MinimumSize = new Size(MinimumSize.Width, 255 * DeviceDpi / 96);
-                if (WindowState == FormWindowState.Normal) ClientSize = new Size(ClientSize.Width, Math.Max(216 * DeviceDpi / 96, ClientSize.Height - expandedPreviewHeight));
+                MinimumSize = new Size(MinimumSize.Width, MinimumSize.Height - PreviewMinimumHeight * DeviceDpi / 96);
+                if (WindowState == FormWindowState.Normal) ClientSize = new Size(ClientSize.Width, Math.Max(216 * DeviceDpi / 96, ClientSize.Height - expandedPreviewHeight.Value));
             }
             else
             {
-                MinimumSize = new Size(MinimumSize.Width, 420 * DeviceDpi / 96);
+                MinimumSize = new Size(MinimumSize.Width, MinimumSize.Height + PreviewMinimumHeight * DeviceDpi / 96);
                 if (WindowState == FormWindowState.Normal)
                 {
                     var area = Screen.FromControl(this).WorkingArea;
-                    Height = Math.Min(area.Height, Math.Max(MinimumSize.Height, previousHeight + expandedPreviewHeight));
+                    Height = Math.Min(area.Height, Math.Max(MinimumSize.Height,
+                        previousHeight + (expandedPreviewHeight ?? DefaultPreviewHeight * DeviceDpi / 96)));
                     if (Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
                 }
                 layout.RowStyles[4].SizeType = SizeType.Percent;

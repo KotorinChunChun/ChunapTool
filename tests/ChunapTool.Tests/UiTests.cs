@@ -479,6 +479,10 @@ public static class UiTests
         screen.Form.PerformLayout();
         Application.DoEvents();
 
+        // 行の高さなどは96DPI基準で指定している。表示倍率に比例して拡大されなければ文字だけが大きくなり部品がはみ出す。
+        int dpi = screen.Form.DeviceDpi;
+        var rowHeights = screen.Control<TableLayoutPanel>("layout").GetRowHeights();
+        True(Math.Abs(rowHeights[0] - 38 * dpi / 96) <= 1 && Math.Abs(rowHeights[5] - 34 * dpi / 96) <= 1, $"行の高さを表示倍率に合わせて拡大 DPI={dpi}: {string.Join(",", rowHeights)}");
         var controls = new List<Control>(screen.Numbers);
         controls.AddRange(new[] { "search", "targets", "refresh", "alwaysOnTop", "maximize", "autoRead", "autoApply", "allowOutside", "apply", "undo" }
             .Select(screen.Control<Control>));

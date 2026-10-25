@@ -10,7 +10,7 @@ internal sealed class ThumbnailPickerForm : BrandedForm
     private readonly bool passive;
     private readonly CancellationTokenSource lifetime = new();
     private readonly TextBox search = new() { Dock = DockStyle.Fill, AccessibleName = "サムネイル検索", PlaceholderText = "タイトルまたは実行ファイル名" };
-    private readonly Button close = new() { Text = "閉じる", AutoSize = true, DialogResult = DialogResult.Cancel };
+    private readonly Button close = new() { Text = "閉じる", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0), DialogResult = DialogResult.Cancel };
     private readonly Label count = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
     private readonly Panel viewport = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly TableLayoutPanel grid = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4) };
@@ -29,9 +29,13 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         catalog = new ThumbnailCatalog(capture);
         this.current = current;
         this.passive = passive;
+        // DPIの自動拡大はレイアウト再開時に行われるため、構築全体を一時停止で囲む。
+        SuspendLayout();
         Text = WindowTitle.Create("サムネイルから対象を選択");
         Font = new Font("Yu Gothic UI", 10);
         AutoScaleMode = AutoScaleMode.Dpi;
+        // サイズと行の高さは96DPI基準。基準DPIを指定して表示倍率に合わせて拡大する。
+        AutoScaleDimensions = new SizeF(96F, 96F);
         StartPosition = FormStartPosition.Manual;
         MinimumSize = new Size(640, 400);
         ClientSize = new Size(1000, 680);
@@ -50,6 +54,8 @@ internal sealed class ThumbnailPickerForm : BrandedForm
         viewport.Controls.Add(grid);
         layout.Controls.Add(top, 0, 0); layout.Controls.Add(count, 0, 1); layout.Controls.Add(viewport, 0, 2);
         Controls.Add(layout);
+        ResumeLayout(false);
+        PerformLayout();
         CancelButton = close;
         tooltip.SetToolTip(close, "対象を変更せずに選択画面を閉じ、撮影を停止します。\nEscでも閉じられます。");
         close.Click += (_, _) => Close();
