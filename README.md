@@ -28,7 +28,7 @@ Python、OpenCV、FFmpegの準備は不要です。録画や動画編集機能�
 
 画像から探す場合は「サムネイル選択」を押します。作業領域いっぱいの選択画面で画像とウィンドウ名を確認し、クリックして確定します。検索は入力直後に絞り込み、画像は1枚ずつ数秒おきに更新します。選択・取消で閉じると撮影も停止します。
 
-現在の公開版はv0.1.2です。ソースは[GitHubリポジトリ](https://github.com/KotorinChunChun/ChunapTool)、詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[開発資料](dev/README.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。v0.1.2公開後の修正（管理pipeの受付継続、スナップ中の位置へのUndo、表示倍率125%などでの配置）は[コードレビュー修正記録](dev/research/code-review-2026-10-25/report.md)にあり、未リリースです。
+現在の公開版はv0.1.2です。ソースは[GitHubリポジトリ](https://github.com/KotorinChunChun/ChunapTool)、詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[開発資料](dev/README.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。v0.1.2公開後の修正（管理pipeの受付継続、スナップ中の位置へのUndo、表示倍率125%などでの配置、二重起動時の案内ほか）は[コードレビュー修正記録](dev/research/code-review-2026-10-25/report.md)にあり、未リリースです。
 
 KotorinToys配下の独立リポジトリです。本体からの開発版起動・停止・状態確認に対応しています。
 
