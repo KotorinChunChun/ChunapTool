@@ -316,6 +316,7 @@ internal static class ThumbnailTests
 
     private sealed class FakeWindows : IWindowService
     {
+        public WindowIdentity? GetForeground() => null;
         internal List<WindowEntry> Entries { get; } = [First, Second];
         internal int Enumerations { get; private set; }
         internal int Mutations { get; private set; }

@@ -8,6 +8,8 @@ Windowsのウィンドウを選び、位置・サイズ・最大化を調整す�
 
 Windows 11 x64向けの[ポータブル版](https://github.com/KotorinChunChun/ChunapTool/releases/tag/v0.1.1)はZIPをすべて展開し、`ChunapTool.exe`を起動します。.NET 10ランタイムを同梱しています。配布ZIPは未署名です。同じリリースの`SHA256SUMS.txt`でハッシュを確認できます。
 
+開発中のv0.2.0では、全機能をコマンドライン（`chunap.exe`）から呼び出せるようにしています。現在使えるコマンドと使い方は[利用・開発ガイド](docs/guide.md)の「コマンドライン」を参照してください。
+
 ソースから起動する場合は.NET 10 SDKとPowerShell 7を使用します。
 
 ```powershell

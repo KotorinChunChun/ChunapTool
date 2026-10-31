@@ -24,3 +24,6 @@ jobs:
       - name: 不可視画面の回帰検証
         shell: pwsh
         run: ./dev/scripts/test.ps1 -Ui
+      - name: CLI論理検証
+        shell: pwsh
+        run: ./dev/scripts/test.ps1 -Cli

@@ -44,7 +44,7 @@ public sealed class NativeWindowService : IWindowService
             if (Matches(identity) && (search.Length == 0
                 || title.Contains(search, StringComparison.OrdinalIgnoreCase)
                 || processName.Contains(search, StringComparison.OrdinalIgnoreCase)))
-                entries.Add(new WindowEntry(identity, title, processName));
+                entries.Add(new WindowEntry(identity, title, processName) { ClassName = GetClassName(window) });
             return true;
         };
         if (!NativeMethods.EnumWindows(callback, 0))
@@ -160,6 +160,20 @@ public sealed class NativeWindowService : IWindowService
             if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, flags))
                 throw LastError("保存したウィンドウ位置を復元できませんでした。");
         }
+    }
+
+    public WindowIdentity? GetForeground()
+    {
+        nint window = NativeMethods.GetAncestor(NativeMethods.GetForegroundWindow(), 2);
+        if (window == 0 || NativeMethods.GetWindowThreadProcessId(window, out uint processId) == 0)
+            return null;
+        return new WindowIdentity(window, processId);
+    }
+
+    internal static string GetClassName(nint window)
+    {
+        var buffer = new StringBuilder(256);
+        return NativeMethods.GetClassNameW(window, buffer, buffer.Capacity) > 0 ? buffer.ToString() : "";
     }
 
     internal static bool Matches(WindowIdentity target) => target.Handle != 0

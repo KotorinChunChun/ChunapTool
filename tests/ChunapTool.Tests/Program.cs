@@ -7,6 +7,8 @@ internal static class Program
     {
         if (args.Length == 2 && args[0] == "--capture-smoke") return WgcSmokeTests.Run(args[1]);
         if (args.SequenceEqual(new[] { "--native" })) return NativeTests.Run();
+        if (args.SequenceEqual(new[] { "--cli" })) return CliTests.RunLogic();
+        if (args.SequenceEqual(new[] { "--cli-native" })) return CliTests.RunNative();
         if (args.SequenceEqual(new[] { "--ui" }))
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -37,13 +39,13 @@ internal static class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new FixtureForm());
+            Application.Run(new FixtureForm(FixtureOptions.Parse(args)));
             return 0;
         }
 
         if (args.Length > 0)
         {
-            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--fixtureで動作確認用画面を起動します。");
+            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--cliでCLI論理検証、--cli-nativeでCLI実機検証、--fixtureで動作確認用画面を起動します。");
             return 2;
         }
 

@@ -15,6 +15,7 @@ public sealed record WindowState(WindowIdentity Target, WindowBounds Bounds, Win
 }
 public sealed record WindowEntry(WindowIdentity Identity, string Title, string ProcessName)
 {
+    public string ClassName { get; init; } = "";
     public override string ToString() => $"[{ProcessName}] {Title} ({Identity.ProcessId})";
 }
 public interface IWindowService
@@ -25,5 +26,7 @@ public interface IWindowService
     void ApplyBounds(WindowIdentity target, WindowBounds bounds);
     void SetMaximized(WindowIdentity target, bool maximized);
     void Restore(WindowState state);
+    // 前面ウィンドウのトップレベル。取得できなければnull。
+    WindowIdentity? GetForeground();
     bool IsLeftButtonDown { get; }
 }

@@ -728,6 +728,7 @@ public static class UiTests
 
     private sealed class FakeWindows : IWindowService
     {
+        public WindowIdentity? GetForeground() => null;
         // HWND=0は必ず無効。実在する外部ウィンドウへDWMを接続しない。
         public static WindowIdentity First { get; } = new(0, 1);
         public static WindowIdentity Second { get; } = new(0, 2);

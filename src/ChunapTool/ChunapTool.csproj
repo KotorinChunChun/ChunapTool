@@ -18,6 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ChunapTool.Tests" />
+    <InternalsVisibleTo Include="chunap" />
     <EmbeddedResource Include="assets/ChulipVideo.png" />
   </ItemGroup>
 </Project>

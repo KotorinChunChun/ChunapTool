@@ -81,6 +81,12 @@ internal static class NativeMethods
     internal static extern int GetWindowTextLengthW(nint window);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetClassNameW(nint window, StringBuilder name, int maximumCount);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetWindowTextW(nint window, StringBuilder text, int maximumCount);
 
     [DllImport("user32.dll", SetLastError = true)]

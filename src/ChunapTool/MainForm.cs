@@ -1,7 +1,7 @@
 using ChunapTool.Core;
 using ChunapTool.Native;
+using ChunapTool.Operations;
 using ChunapTool.Thumbnails;
-using System.Diagnostics;
 
 namespace ChunapTool;
 
@@ -370,7 +370,7 @@ public sealed class MainForm : BrandedForm
         {
             var desired = WindowGeometry.Constrain(requested, windows.GetWorkArea(before.Target), allowOutside.Checked);
             windows.ApplyBounds(before.Target, desired);
-            return state => state.Bounds == desired || state.Bounds != before.Bounds;
+            return state => WindowOperations.BoundsCompleted(state, before, desired);
         }, observeBefore: !autoConstrain, readGeometry: !autoConstrain || autoRead.Checked, keepGeometryEditable: true);
     }
 
@@ -380,7 +380,7 @@ public sealed class MainForm : BrandedForm
         await MutateAsync(desired ? "最大化しました。" : "通常の位置・サイズに戻しました。", before =>
         {
             windows.SetMaximized(before.Target, desired);
-            return state => state.IsMaximized == desired && !state.IsMinimized;
+            return state => WindowOperations.MaximizeCompleted(state, desired);
         });
     }
 
@@ -392,14 +392,9 @@ public sealed class MainForm : BrandedForm
             if (!history.TryPeekUndo(out var target) || target is null)
                 throw new InvalidOperationException("戻せる履歴がありません。");
             windows.Restore(target);
-            return state => UndoCompleted(state, target);
+            return state => WindowOperations.RestoreCompleted(state, target);
         }, isUndo: true);
     }
-
-    // 最大化は通常復元位置で、通常表示は見える矩形で比べる。スナップ中は両者が一致しない。
-    private static bool UndoCompleted(WindowState actual, WindowState target) =>
-        actual.IsMaximized == target.IsMaximized && !actual.IsMinimized
-        && (target.IsMaximized ? actual.Placement.NormalBounds == target.Placement.NormalBounds : actual.Bounds == target.Bounds);
 
     private async Task MutateAsync(string message, Func<WindowState, Func<WindowState, bool>> begin, bool isUndo = false, bool observeBefore = true, bool readGeometry = true, bool keepGeometryEditable = false)
     {
@@ -414,19 +409,8 @@ public sealed class MainForm : BrandedForm
             var before = windows.GetState(selected.Identity) ?? throw new InvalidOperationException("対象が終了しました。");
             if (!isUndo && observeBefore) history.Observe(before);
             var completed = begin(before);
-            var watch = Stopwatch.StartNew();
-            WindowState? actual = null, previous = null;
-            var stable = 0;
-            while (watch.ElapsedMilliseconds < 1800)
-            {
-                await Task.Delay(70);
-                if (IsDisposed) return;
-                actual = windows.GetState(before.Target) ?? throw new InvalidOperationException("対象が終了しました。");
-                stable = actual == previous ? stable + 1 : 0;
-                previous = actual;
-                if (completed(actual) && stable >= 2) break;
-            }
-            if (actual is null || !completed(actual)) throw new InvalidOperationException("対象が変更に応答しませんでした。権限または対象アプリの制限を確認してください。");
+            var actual = await WindowOperations.WaitForAsync(windows, before.Target, completed,
+                TimeSpan.FromMilliseconds(1800), () => IsDisposed);
             if (isUndo) history.AcceptUndo(actual); else history.Observe(actual);
             current = actual;
             var hasPendingEdits = editRevision != revision;
@@ -434,6 +418,8 @@ public sealed class MainForm : BrandedForm
             if (readGeometry && !hasPendingEdits) WriteState(actual); else WriteMaximized(actual);
             SetStatus(message);
         }
+        // 待機中に画面を閉じた場合は、破棄した画面へ結果を書かない。
+        catch (OperationCanceledException) when (IsDisposed) { }
         catch (Exception ex)
         {
             SetStatus($"変更できません: {ex.Message}", true);
