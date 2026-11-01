@@ -4,11 +4,11 @@ Windowsのウィンドウを選び、位置・サイズ・最大化を調整す�
 
 ## 起動
 
-[Releases](https://github.com/KotorinChunChun/ChunapTool/releases)の`ChunapTool-0.1.2-setup.exe`で利用者単位に導入できます。KotorinToys 0.1.2以降の本体からの導入・更新・削除にも対応します。[導入と保持・削除の手順](docs/install.md)を確認してください。ランタイム同梱の未署名開発版です。v0.1.2は設定・Undo履歴をファイルへ保存しないため（起動ごとに既定値）、更新・削除で失われる利用者データはありません（開発中のv0.2.0では、設定とプリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存します）。
+[Releases](https://github.com/KotorinChunChun/ChunapTool/releases)の`ChunapTool-0.1.2-setup.exe`で利用者単位に導入できます。KotorinToys 0.1.2以降の本体からの導入・更新・削除にも対応します。[導入と保持・削除の手順](docs/install.md)を確認してください。ランタイム同梱の未署名開発版です。v0.1.3からは、設定とプリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存します（Undo履歴は保存しません）。導入先とは別の場所のため、更新しても失われません。v0.1.3は公開準備中で、現在のReleasesはv0.1.2です。
 
 Windows 11 x64向けの[ポータブル版](https://github.com/KotorinChunChun/ChunapTool/releases/tag/v0.1.1)はZIPをすべて展開し、`ChunapTool.exe`を起動します。.NET 10ランタイムを同梱しています。配布ZIPは未署名です。同じリリースの`SHA256SUMS.txt`でハッシュを確認できます。
 
-開発中のv0.2.0では、全機能をコマンドライン（`chunap.exe`）から呼び出せるようにしています。現在使えるコマンドと使い方は[利用・開発ガイド](docs/guide.md)の「コマンドライン」を参照してください。
+v0.1.3から、位置・サイズ・最大化・プリセット・設定をコマンドライン（`chunap.exe`、`ChunapTool.exe`と同じフォルダー）から操作できます。使い方は[利用・開発ガイド](docs/guide.md)の「コマンドライン」を参照してください。全機能のコマンドライン化は、次のv0.2.0で進めています。
 
 ソースから起動する場合は.NET 10 SDKとPowerShell 7を使用します。
 
@@ -27,10 +27,11 @@ Python、OpenCV、FFmpegの準備は不要です。録画や動画編集機能�
 4. 「最大化」で最大化するとボタンが「通常化」に変わります。「戻す」で直前の位置・サイズ・最大化状態へ戻します。
 5. 適用ボタンの右の「画面外可」で、モニターの作業領域を超える位置・サイズを許可するか切り替えます。
 6. Xの左の「▼」でプレビューを開き、「▲」で閉じます。通常は折りたたんだ状態で起動します。
+7. 「基準」で、X/Y/W/Hを見える枠で扱うか、中身（クライアント領域）で扱うかを選びます。「比率固定」で縦横比を保ち、「プリセット ▼」で登録したサイズにします（v0.1.3から）。
 
 画像から探す場合は「サムネイル選択」を押します。作業領域いっぱいの選択画面で画像とウィンドウ名を確認し、クリックして確定します。検索は入力直後に絞り込み、画像は1枚ずつ数秒おきに更新します。選択・取消で閉じると撮影も停止します。
 
-現在の公開版はv0.1.2です。ソースは[GitHubリポジトリ](https://github.com/KotorinChunChun/ChunapTool)、詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[開発資料](dev/README.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。v0.1.2公開後の修正（管理pipeの受付継続、スナップ中の位置へのUndo、表示倍率125%などでの配置、二重起動時の案内ほか）は[コードレビュー修正記録](dev/research/code-review-2026-10-25/report.md)にあり、未リリースです。
+現在の公開版はv0.1.2、次の公開予定はv0.1.3です。ソースは[GitHubリポジトリ](https://github.com/KotorinChunChun/ChunapTool)、詳しくは[利用・開発ガイド](docs/guide.md)、変更と検証状況は[開発資料](dev/README.md)、移植時の抽出範囲は[v0.1.0実装記録](dev/history/v0.1.0/v0.1.0-imp.md)を参照してください。v0.1.2公開後の修正（管理pipeの受付継続、スナップ中の位置へのUndo、表示倍率125%などでの配置、二重起動時の案内ほか）は[コードレビュー修正記録](dev/research/code-review-2026-10-25/report.md)にあり、v0.1.3に含めます。v0.1.3の内容は[v0.1.3の記録](dev/history/v0.1.3/v0.1.3-imp.md)を参照してください。
 
 KotorinToys配下の独立リポジトリです。本体からの開発版起動・停止・状態確認に対応しています。
 

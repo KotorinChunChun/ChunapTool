@@ -4,4 +4,4 @@ Windows 11 x64向け未署名開発版です。[ChunapTool Releases](https://git
 
 利用者単位へ導入し、スタートメニューへ登録します。更新・削除時は正常停止と製品識別を確認し、操作中に終了を拒否した場合は中止します。既存のポータブルZIPや利用者データは移動・削除しません。通常操作は[操作ガイド](guide.md)を参照してください。
 
-Windowsの「インストールされているアプリ」またはKotorinToysから削除できます。v0.1.2は設定・Undo履歴をファイルへ保存しないため、更新・削除で失われる利用者データはありません。開発中のv0.2.0では設定とプリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存します。削除時の扱いはv0.2.0の配布時に決めます。ビルドと自動試験の成功を、全ウィンドウ・全DPIでの実操作受入完了とは扱いません。
+Windowsの「インストールされているアプリ」またはKotorinToysから削除できます。v0.1.2は設定・Undo履歴をファイルへ保存しません。v0.1.3からは設定とプリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存します（Undo履歴は保存しません）。導入先とは別の場所のため、更新しても失われません。削除後に設定が不要な場合は、`%LOCALAPPDATA%\KotorinToys\ChunapTool\`フォルダーを削除してください。ビルドと自動試験の成功を、全ウィンドウ・全DPIでの実操作受入完了とは扱いません。
