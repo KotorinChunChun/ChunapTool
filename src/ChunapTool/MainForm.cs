@@ -36,6 +36,16 @@ public sealed class MainForm : BrandedForm
     internal readonly CheckBox alwaysOnTop = new() { Text = "最前面", Checked = true, AutoSize = true };
     internal readonly Button apply = new() { Text = "適用", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
     internal readonly Button undo = new() { Text = "戻す", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
+    internal readonly ComboBox basis = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 80, AccessibleName = "座標の基準" };
+    internal readonly CheckBox keepAspect = new() { Text = "比率固定", AutoSize = true };
+    internal readonly Button presetButton = new() { Text = "プリセット ▼", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(75, 0) };
+    internal readonly ContextMenuStrip presetMenu = new();
+    private readonly SettingsStore? settings;
+    private readonly bool settingsWritable;
+    internal readonly PresetSource presets;
+    // 比率固定の元（幅÷高さ）。固定をONにした時点の対象のサイズか、選んだプリセットの比率。
+    internal double? aspectRatio;
+    private bool syncingAspect;
     internal readonly NumericUpDown[] numbers = Enumerable.Range(0, 4).Select(i => new NumericUpDown
     {
         Minimum = i < 2 ? -1000000 : 32, Maximum = 1000000, Width = 110,
@@ -59,11 +69,22 @@ public sealed class MainForm : BrandedForm
 
     public MainForm() : this(new NativeWindowService()) { }
 
-    internal MainForm(IWindowService windowService, bool passive = false, IWindowTargetPicker? targetPicker = null)
+    // settingsがnull（不可視UI回帰など）の場合は、設定ファイルを読み書きしない。
+    internal MainForm(IWindowService windowService, bool passive = false, IWindowTargetPicker? targetPicker = null, SettingsStore? settings = null)
     {
         windows = windowService;
         this.passive = passive;
         this.targetPicker = targetPicker ?? new WindowTargetPicker();
+        this.settings = settings;
+        presets = new PresetSource(settings);
+        string? settingsWarning = null;
+        var saved = new GuiSettings();
+        settingsWritable = settings is not null;
+        if (settings is not null)
+        {
+            saved = settings.LoadOrRecover(out settingsWarning, out var writable).Gui;
+            settingsWritable = writable;
+        }
         // DPIの自動拡大はレイアウト再開時に行われるため、構築全体を一時停止で囲む。
         SuspendLayout();
         Text = WindowTitle.Create();
@@ -71,15 +92,34 @@ public sealed class MainForm : BrandedForm
         AutoScaleMode = AutoScaleMode.Dpi;
         // 以下のサイズと行・列の幅は96DPI基準。基準DPIを指定しないと自動拡大されず、125%などで文字だけが大きくなる。
         AutoScaleDimensions = new SizeF(96F, 96F);
-        ClientSize = new Size(820, 216);
-        MinimumSize = new Size(780, 255);
+        ClientSize = new Size(820, CollapsedClientHeight);
+        MinimumSize = new Size(780, 295);
         StartPosition = FormStartPosition.CenterScreen;
-        TopMost = !passive;
         if (passive) { Opacity = 0; ShowInTaskbar = false; }
         BuildLayout();
+        // 保存した設定は、イベントを登録する前に反映する（読み込みで保存や反映を起こさない）。
+        autoRead.Checked = saved.AutoRead;
+        autoApply.Checked = saved.AutoApply;
+        allowOutside.Checked = saved.AllowOutside;
+        alwaysOnTop.Checked = saved.ToolTopMost;
+        basis.SelectedIndex = saved.Basis == BoundsBasis.Client ? 1 : 0;
+        keepAspect.Checked = saved.KeepAspect;
+        TopMost = !passive && saved.ToolTopMost;
         ResumeLayout(false);
         PerformLayout();
         ConfigureTooltips();
+        autoRead.CheckedChanged += (_, _) => SaveGui(gui => gui with { AutoRead = autoRead.Checked });
+        autoApply.CheckedChanged += (_, _) => SaveGui(gui => gui with { AutoApply = autoApply.Checked });
+        allowOutside.CheckedChanged += (_, _) => SaveGui(gui => gui with { AllowOutside = allowOutside.Checked });
+        alwaysOnTop.CheckedChanged += (_, _) => SaveGui(gui => gui with { ToolTopMost = alwaysOnTop.Checked });
+        basis.SelectedIndexChanged += (_, _) => { ChangeBasis(); SaveGui(gui => gui with { Basis = CurrentBasis }); };
+        keepAspect.CheckedChanged += (_, _) =>
+        {
+            aspectRatio = keepAspect.Checked ? CurrentAspect() : null;
+            SaveGui(gui => gui with { KeepAspect = keepAspect.Checked });
+        };
+        presetButton.Click += (_, _) => presetMenu.Show(presetButton, new Point(0, presetButton.Height));
+        presetMenu.Opening += (_, _) => BuildPresetMenu();
         search.TextChanged += (_, _) => ApplyTargetFilter();
         filterDelay.Tick += (_, _) => { filterDelay.Stop(); RefreshTargets(); };
         refresh.Click += (_, _) => RefreshTargets();
@@ -122,6 +162,7 @@ public sealed class MainForm : BrandedForm
                 if (reading || (busy && !geometryEditableWhileBusy)) return;
                 dirty = true;
                 editRevision++;
+                SyncAspect(number);
                 if (autoApply.Checked && !busy) { editDelay.Stop(); editDelay.Start(); }
             };
             number.TextChanged += (_, _) =>
@@ -143,10 +184,105 @@ public sealed class MainForm : BrandedForm
         poll.Tick += (_, _) => RefreshState(false);
         previewArea.Resize += (_, _) => UpdatePreview();
         Resize += (_, _) => UpdatePreview();
-        Shown += (_, _) => { RefreshTargets(); poll.Start(); };
+        Shown += (_, _) =>
+        {
+            if (saved.PreviewExpanded) TogglePreview();
+            RefreshTargets();
+            poll.Start();
+            if (settingsWarning is not null) SetStatus(settingsWarning, true);
+        };
         FormClosed += (_, _) => { poll.Stop(); filterDelay.Stop(); editDelay.Stop(); preview.Dispose(); };
         UpdateControls();
         SetStatus("対象を選ぶと、位置・サイズを調整できます。");
+    }
+
+    private const int CollapsedClientHeight = 256;
+    internal const int PreviewRow = 5;
+
+    internal BoundsBasis CurrentBasis => basis.SelectedIndex == 1 ? BoundsBasis.Client : BoundsBasis.Frame;
+
+    // 設定は項目ごとに、ファイルを読み直してから保存する。CLIで変えた他の項目を上書きしない。
+    private void SaveGui(Func<GuiSettings, GuiSettings> change)
+    {
+        if (settings is null || !settingsWritable) return;
+        try { settings.Update(document => document.Gui = change(document.Gui)); }
+        catch (Exception ex) when (ex is SettingsException or IOException or UnauthorizedAccessException)
+        {
+            SetStatus($"設定を保存できません: {ex.Message}", true);
+        }
+    }
+
+    // 基準を切り替えても、未適用の入力値は同じ見える枠を指すよう換算して保つ。
+    private void ChangeBasis()
+    {
+        if (current is null) return;
+        var previous = CurrentBasis == BoundsBasis.Client ? BoundsBasis.Frame : BoundsBasis.Client;
+        if (dirty)
+        {
+            var frame = BoundsBases.ToFrame(InputBounds(), current, previous);
+            WriteBounds(BoundsBases.FromFrame(frame, current, CurrentBasis));
+        }
+        else WriteState(current);
+        if (keepAspect.Checked) aspectRatio = CurrentAspect();
+    }
+
+    private double CurrentAspect()
+    {
+        var size = current is null ? InputBounds() : BoundsBases.Read(current, CurrentBasis);
+        return AspectRatio.Of(size.Width, size.Height);
+    }
+
+    // 比率固定中は、幅を編集すると高さを、高さを編集すると幅を更新する。
+    private void SyncAspect(NumericUpDown edited)
+    {
+        if (syncingAspect || !keepAspect.Checked || aspectRatio is not { } ratio) return;
+        int index = Array.IndexOf(numbers, edited);
+        if (index < 2) return;
+        var (width, height) = index == 2
+            ? AspectRatio.Fit((int)numbers[2].Value, null, ratio, (int)numbers[2].Value)
+            : AspectRatio.Fit(null, (int)numbers[3].Value, ratio, (int)numbers[2].Value);
+        syncingAspect = true;
+        try
+        {
+            var other = numbers[index == 2 ? 3 : 2];
+            other.Value = Math.Clamp(index == 2 ? height : width, other.Minimum, other.Maximum);
+        }
+        finally { syncingAspect = false; }
+    }
+
+    private void BuildPresetMenu()
+    {
+        presetMenu.Items.Clear();
+        try
+        {
+            foreach (var preset in presets.Load())
+                presetMenu.Items.Add(preset.ToString(), null, async (_, _) => await ApplyPresetAsync(preset));
+            if (presetMenu.Items.Count == 0) presetMenu.Items.Add(new ToolStripMenuItem("（プリセットはありません）") { Enabled = false });
+        }
+        catch (Exception ex) when (ex is SettingsException or IOException or UnauthorizedAccessException)
+        {
+            presetMenu.Items.Add(new ToolStripMenuItem("（プリセットを読めません）") { Enabled = false });
+            SetStatus($"プリセットを読めません: {ex.Message}", true);
+        }
+        presetMenu.Items.Add(new ToolStripSeparator());
+        presetMenu.Items.Add("プリセットの管理…", null, (_, _) => OpenPresetEditor());
+    }
+
+    // プリセットは位置を変えず、プリセットの基準で幅・高さだけを変える。比率固定中はプリセットの比率に切り替える。
+    internal async Task ApplyPresetAsync(Preset preset)
+    {
+        editDelay.Stop();
+        if (busy || selected is null || current is null || current.IsMaximized || current.IsMinimized) return;
+        if (keepAspect.Checked) aspectRatio = AspectRatio.Of(preset.Width, preset.Height);
+        await ApplyRequestAsync(new BoundsRequest(null, null, preset.Width, preset.Height) { Basis = preset.Basis },
+            $"プリセット「{preset.Name}」を反映しました。");
+    }
+
+    private void OpenPresetEditor()
+    {
+        var size = InputBounds();
+        using var editor = new PresetEditorForm(presets, new Size(size.Width, size.Height), CurrentBasis, passive);
+        editor.ShowDialog(this);
     }
 
     private void ConfigureTooltips()
@@ -160,6 +296,9 @@ public sealed class MainForm : BrandedForm
         tooltip.SetToolTip(alwaysOnTop, "ChunapToolを他のウィンドウより手前に表示します。");
         tooltip.SetToolTip(apply, "入力した位置・サイズを対象へ反映します。\n「自動反映」がOFFのときに使用できます。");
         tooltip.SetToolTip(undo, "対象の位置・サイズ・最大化状態を一つ前へ戻します。\n最大100手。対象を切り替えると履歴をリセットします。");
+        tooltip.SetToolTip(basis, "X/Y/W/Hの基準を選びます。\n枠: 見えるウィンドウ枠 / 中身: タイトルバーと枠を除いたクライアント領域");
+        tooltip.SetToolTip(keepAspect, "幅か高さを編集すると、縦横比を保つようにもう一方を更新します。\n比率は固定をONにした時点のサイズか、選んだプリセットの比率です。");
+        tooltip.SetToolTip(presetButton, "登録したサイズを選ぶと、位置を変えずにサイズを反映します。\n「プリセットの管理…」で追加・変更・並べ替えができます。");
         UpdateMaximizeTooltip(false);
         UpdatePreviewTooltip();
     }
@@ -178,11 +317,12 @@ public sealed class MainForm : BrandedForm
 
     private void BuildLayout()
     {
-        layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 6 };
+        layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 7 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
@@ -223,11 +363,23 @@ public sealed class MainForm : BrandedForm
             numbers[i].Anchor = AnchorStyles.Left | AnchorStyles.Right;
             geometry.Controls.Add(numbers[i], i * 2 + 2, 0);
         }
+        // 録画前のサイズ合わせ: 座標の基準、比率固定、プリセット。
+        var sizing = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
+        sizing.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        basis.Items.AddRange(["枠", "中身"]);
+        Control[] sizingControls = [Caption("基準"), basis, keepAspect, presetButton];
+        for (var i = 0; i < sizingControls.Length; i++)
+        {
+            sizing.ColumnStyles.Add(i == 0 ? new ColumnStyle(SizeType.Absolute, 52) : new ColumnStyle(SizeType.AutoSize));
+            sizingControls[i].Anchor = AnchorStyles.Left;
+            sizing.Controls.Add(sizingControls[i], i, 0);
+        }
         previewArea.Controls.Add(previewMessage);
         previewArea.Visible = false;
         layout.Controls.Add(searchRow, 0, 0); layout.Controls.Add(targetRow, 0, 1);
         layout.Controls.Add(options, 0, 2); layout.Controls.Add(geometry, 0, 3);
-        layout.Controls.Add(previewArea, 0, 4); layout.Controls.Add(status, 0, 5);
+        layout.Controls.Add(sizing, 0, PreviewRow - 1);
+        layout.Controls.Add(previewArea, 0, PreviewRow); layout.Controls.Add(status, 0, PreviewRow + 1);
         Controls.Add(layout);
     }
 
@@ -294,6 +446,8 @@ public sealed class MainForm : BrandedForm
         if (current is null) { ClearTarget("対象ウィンドウを選択してください"); return; }
         ApplyTargetFilter();
         WriteState(current);
+        // 比率固定中に対象を切り替えた場合は、新しい対象のサイズを比率の元にする。
+        if (keepAspect.Checked) aspectRatio = CurrentAspect();
         UpdateControls();
         UpdatePreview();
     }
@@ -334,13 +488,27 @@ public sealed class MainForm : BrandedForm
         reading = true;
         try
         {
-            var values = new[] { state.Bounds.X, state.Bounds.Y, state.Bounds.Width, state.Bounds.Height };
-            for (var i = 0; i < 4; i++) numbers[i].Value = Math.Clamp(values[i], numbers[i].Minimum, numbers[i].Maximum);
+            WriteBounds(BoundsBases.Read(state, CurrentBasis));
             maximize.Checked = state.IsMaximized;
             maximize.Text = state.IsMaximized ? "通常化" : "最大化";
             UpdateMaximizeTooltip(state.IsMaximized);
         }
         finally { reading = false; }
+    }
+
+    private WindowBounds InputBounds() =>
+        new((int)numbers[0].Value, (int)numbers[1].Value, (int)numbers[2].Value, (int)numbers[3].Value);
+
+    private void WriteBounds(WindowBounds bounds)
+    {
+        var restore = reading;
+        reading = true;
+        try
+        {
+            var values = new[] { bounds.X, bounds.Y, bounds.Width, bounds.Height };
+            for (var i = 0; i < 4; i++) numbers[i].Value = Math.Clamp(values[i], numbers[i].Minimum, numbers[i].Maximum);
+        }
+        finally { reading = restore; }
     }
 
     private void WriteMaximized(WindowState state)
@@ -360,15 +528,22 @@ public sealed class MainForm : BrandedForm
         editDelay.Stop();
         if (busy || selected is null || current is null || current.IsMaximized || current.IsMinimized) return;
         ValidateChildren();
-        var bounds = new WindowBounds((int)numbers[0].Value, (int)numbers[1].Value, (int)numbers[2].Value, (int)numbers[3].Value);
-        await ApplyBoundsAsync(bounds);
+        var bounds = InputBounds();
+        // 入力欄は選んだ基準の値。比率固定中は、作業領域へ収めるために縮める場合も比率を保つ。
+        await ApplyRequestAsync(new BoundsRequest(bounds.X, bounds.Y, bounds.Width, bounds.Height)
+        {
+            Basis = CurrentBasis, Aspect = keepAspect.Checked ? aspectRatio : null,
+        });
     }
 
-    private async Task ApplyBoundsAsync(WindowBounds requested, bool autoConstrain = false)
+    private Task ApplyBoundsAsync(WindowBounds frame, bool autoConstrain) =>
+        ApplyRequestAsync(new BoundsRequest(frame.X, frame.Y, frame.Width, frame.Height), autoConstrain: autoConstrain);
+
+    private async Task ApplyRequestAsync(BoundsRequest request, string message = "位置・サイズを反映しました。", bool autoConstrain = false)
     {
-        await MutateAsync("位置・サイズを反映しました。", before =>
+        await MutateAsync(message, before =>
         {
-            var desired = WindowGeometry.Constrain(requested, windows.GetWorkArea(before.Target), allowOutside.Checked);
+            var desired = WindowOperations.Plan(before, request, windows.GetWorkArea(before.Target), allowOutside.Checked).Frame;
             windows.ApplyBounds(before.Target, desired);
             return state => WindowOperations.BoundsCompleted(state, before, desired);
         }, observeBefore: !autoConstrain, readGeometry: !autoConstrain || autoRead.Checked, keepGeometryEditable: true);
@@ -454,6 +629,10 @@ public sealed class MainForm : BrandedForm
         autoRead.Enabled = exists && available;
         autoApply.Enabled = exists && available;
         allowOutside.Enabled = exists && available;
+        // 基準と比率固定は対象がなくても選べる（保存した設定として次の対象に使う）。
+        basis.Enabled = available;
+        keepAspect.Enabled = available;
+        presetButton.Enabled = editable;
         targets.Enabled = available;
         refresh.Enabled = available;
         search.Enabled = available;
@@ -502,7 +681,7 @@ public sealed class MainForm : BrandedForm
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { EndTargetPick(false); thumbnailPicker?.Dispose(); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); tooltip.Dispose(); }
+        if (disposing) { EndTargetPick(false); thumbnailPicker?.Dispose(); poll.Dispose(); filterDelay.Dispose(); editDelay.Dispose(); preview.Dispose(); tooltip.Dispose(); presetMenu.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -560,13 +739,13 @@ public sealed class MainForm : BrandedForm
         {
             if (!previewExpanded)
             {
-                expandedPreviewHeight = Math.Max(150 * DeviceDpi / 96, layout.GetRowHeights()[4]);
+                expandedPreviewHeight = Math.Max(150 * DeviceDpi / 96, layout.GetRowHeights()[PreviewRow]);
                 preview.Clear();
                 previewArea.Visible = false;
-                layout.RowStyles[4].SizeType = SizeType.Absolute;
-                layout.RowStyles[4].Height = 0;
+                layout.RowStyles[PreviewRow].SizeType = SizeType.Absolute;
+                layout.RowStyles[PreviewRow].Height = 0;
                 MinimumSize = new Size(MinimumSize.Width, MinimumSize.Height - PreviewMinimumHeight * DeviceDpi / 96);
-                if (WindowState == FormWindowState.Normal) ClientSize = new Size(ClientSize.Width, Math.Max(216 * DeviceDpi / 96, ClientSize.Height - expandedPreviewHeight.Value));
+                if (WindowState == FormWindowState.Normal) ClientSize = new Size(ClientSize.Width, Math.Max(CollapsedClientHeight * DeviceDpi / 96, ClientSize.Height - expandedPreviewHeight.Value));
             }
             else
             {
@@ -578,8 +757,8 @@ public sealed class MainForm : BrandedForm
                         previousHeight + (expandedPreviewHeight ?? DefaultPreviewHeight * DeviceDpi / 96)));
                     if (Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
                 }
-                layout.RowStyles[4].SizeType = SizeType.Percent;
-                layout.RowStyles[4].Height = 100;
+                layout.RowStyles[PreviewRow].SizeType = SizeType.Percent;
+                layout.RowStyles[PreviewRow].Height = 100;
                 previewArea.Visible = true;
                 previewFailed = false;
             }
@@ -589,6 +768,7 @@ public sealed class MainForm : BrandedForm
         }
         finally { ResumeLayout(true); }
         UpdatePreview();
+        SaveGui(gui => gui with { PreviewExpanded = previewExpanded });
     }
 
     private void OpenThumbnailPicker()

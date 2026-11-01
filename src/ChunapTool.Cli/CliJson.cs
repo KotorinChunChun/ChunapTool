@@ -26,12 +26,38 @@ internal static class CliJson
         ["class"] = entry.ClassName,
     };
 
+    // 要求は指定の基準で表し、実際に送る見える枠も添える。
+    internal static JsonObject Requested(WindowBounds frame, BoundsBasis basis, WindowBounds? inBasis)
+    {
+        var json = Bounds(inBasis ?? frame);
+        json["basis"] = BoundsBases.Name(basis);
+        json["frame"] = Bounds(frame);
+        return json;
+    }
+
+    internal static JsonObject Preset(Preset preset) => new()
+    {
+        ["name"] = preset.Name, ["width"] = preset.Width, ["height"] = preset.Height, ["basis"] = BoundsBases.Name(preset.Basis),
+    };
+
+    internal static JsonArray Presets(IReadOnlyList<Preset> presets) =>
+        new(presets.Select(preset => (JsonNode)Preset(preset)).ToArray());
+
+    // 真偽値の設定はJSONの真偽値で、それ以外は文字列で出力する。
+    internal static JsonNode SettingValue(string value) => value switch
+    {
+        "true" => JsonValue.Create(true),
+        "false" => JsonValue.Create(false),
+        _ => JsonValue.Create(value),
+    };
+
     internal static string Handle(nint handle) => "0x" + ((long)handle).ToString("X", CultureInfo.InvariantCulture);
 
     internal static JsonObject State(WindowState state) => new()
     {
         ["frame"] = Bounds(state.Bounds),
         ["outer"] = state.OuterBounds is { } outer ? Bounds(outer) : null,
+        ["client"] = state.ClientBounds is { } client ? Bounds(client) : null,
         ["maximized"] = state.IsMaximized,
         ["minimized"] = state.IsMinimized,
         ["canMaximize"] = state.CanMaximize,
@@ -59,6 +85,7 @@ internal static class CliJson
                 state["canMaximize"]?.GetValue<bool>() ?? true)
             {
                 OuterBounds = state["outer"] is { } outer ? ReadBounds(outer) : null,
+                ClientBounds = state["client"] is { } client ? ReadBounds(client) : null,
             };
         }
         catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)

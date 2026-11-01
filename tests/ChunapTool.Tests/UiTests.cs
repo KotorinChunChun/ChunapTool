@@ -36,6 +36,13 @@ public static class UiTests
             ("画面外への移動と自動補正を1操作として戻す", AutoConstrainAsOneStep),
             ("拒否された自動補正を同じ状態で繰り返さない", AutoConstrainRetry),
             ("変更の待機中に閉じても破棄した画面へ更新しない", DisposeDuringMutation),
+            ("中身の基準で表示し、見える枠へ換算して反映", ClientBasis),
+            ("基準の切替で未適用の値を同じ枠として保つ", ClientBasisPendingEdit),
+            ("比率固定で幅と高さを連動し、収めるときも比率を保つ", KeepAspect),
+            ("プリセットは位置を保ってサイズだけ反映", ApplyPreset),
+            ("プリセットの管理画面で追加・変更・並べ替え・削除", PresetEditor),
+            ("GUIの設定を項目ごとに保存し、次の起動で復元", GuiSettingsPersist),
+            ("読めない設定は退避して既定値で起動し理由を表示", GuiSettingsBroken),
         ];
 
         int failures = 0;
@@ -482,10 +489,12 @@ public static class UiTests
         // 行の高さなどは96DPI基準で指定している。表示倍率に比例して拡大されなければ文字だけが大きくなり部品がはみ出す。
         int dpi = screen.Form.DeviceDpi;
         var rowHeights = screen.Form.layout.GetRowHeights();
-        True(Math.Abs(rowHeights[0] - 38 * dpi / 96) <= 1 && Math.Abs(rowHeights[5] - 34 * dpi / 96) <= 1, $"行の高さを表示倍率に合わせて拡大 DPI={dpi}: {string.Join(",", rowHeights)}");
+        int statusRow = MainForm.PreviewRow + 1;
+        True(Math.Abs(rowHeights[0] - 38 * dpi / 96) <= 1 && Math.Abs(rowHeights[statusRow] - 34 * dpi / 96) <= 1, $"行の高さを表示倍率に合わせて拡大 DPI={dpi}: {string.Join(",", rowHeights)}");
         var controls = new List<Control>(screen.Numbers);
         controls.AddRange(new Control[] { screen.Form.search, screen.Form.targets, screen.Form.refresh, screen.Form.alwaysOnTop, screen.Form.maximize,
-            screen.Form.autoRead, screen.Form.autoApply, screen.Form.allowOutside, screen.Form.apply, screen.Form.undo });
+            screen.Form.autoRead, screen.Form.autoApply, screen.Form.allowOutside, screen.Form.apply, screen.Form.undo,
+            screen.Form.basis, screen.Form.keepAspect, screen.Form.presetButton });
         var rectangles = new List<(Control Control, Rectangle Bounds)>();
         foreach (var control in controls)
         {
@@ -618,6 +627,153 @@ public static class UiTests
         Equal(callsBeforeClose, screen.Service.StateReads, "閉じた後に対象を再取得しない");
     }
 
+    private static void ClientBasis()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Form.autoApply.Checked = false;
+        screen.Form.basis.SelectedIndex = 1;
+        // 偽サービスの枠は左右下8px、上31px。見える枠(120,80,500,340)の中身は(128,111,484,301)。
+        EqualValues([128, 111, 484, 301], screen.Numbers, "中身の基準で表示");
+        screen.Numbers[2].Value = 640;
+        screen.Numbers[3].Value = 360;
+        screen.Await(screen.Form.ApplyAsync());
+        Equal(new WindowBounds(120, 80, 656, 399), screen.Service.GetState(FakeWindows.First)!.Bounds, "見える枠へ換算して反映");
+        EqualValues([128, 111, 640, 360], screen.Numbers, "反映後も中身の値を表示");
+        screen.Form.basis.SelectedIndex = 0;
+        EqualValues([120, 80, 656, 399], screen.Numbers, "枠の基準へ戻す");
+    }
+
+    private static void ClientBasisPendingEdit()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Form.autoApply.Checked = false;
+        screen.Numbers[2].Value = 700;
+        screen.Form.basis.SelectedIndex = 1;
+        EqualValues([128, 111, 684, 301], screen.Numbers, "未適用の幅を中身の値へ換算");
+        True(screen.Form.dirty, "未適用のまま");
+        Equal(0, screen.Service.Mutations, "切替だけでは反映しない");
+    }
+
+    private static void KeepAspect()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Form.autoApply.Checked = false;
+        screen.Numbers[2].Value = 640;
+        screen.Numbers[3].Value = 360;
+        screen.Await(screen.Form.ApplyAsync());
+        screen.Form.keepAspect.Checked = true;
+        screen.Numbers[2].Value = 1280;
+        Equal(720m, screen.Numbers[3].Value, "幅から高さを更新");
+        screen.Numbers[3].Value = 450;
+        Equal(800m, screen.Numbers[2].Value, "高さから幅を更新");
+        // 作業領域(1920×1080)より大きい要求は、比率を保ったまま縮める。
+        screen.Numbers[0].Value = 0;
+        screen.Numbers[1].Value = 0;
+        screen.Numbers[2].Value = 3840;
+        Equal(2160m, screen.Numbers[3].Value, "大きな幅からも高さを更新");
+        screen.Await(screen.Form.ApplyAsync());
+        Equal(new WindowBounds(0, 0, 1920, 1080), screen.Service.GetState(FakeWindows.First)!.Bounds, "16:9のまま作業領域へ収める");
+        screen.Form.keepAspect.Checked = false;
+        screen.Numbers[2].Value = 1000;
+        Equal(1080m, screen.Numbers[3].Value, "固定を外すと連動しない");
+    }
+
+    private static void ApplyPreset()
+    {
+        using var screen = new TestScreen();
+        screen.Select(0);
+        screen.Await(screen.Form.ApplyPresetAsync(new Preset("HD", 1280, 720)));
+        var state = screen.Service.GetState(FakeWindows.First)!;
+        Equal(new WindowBounds(128, 111, 1280, 720), state.ClientBounds!.Value, "中身が1280×720");
+        Equal(new WindowBounds(120, 80, 1296, 759), state.Bounds, "左上の位置を保つ");
+        screen.Await(screen.Form.ApplyPresetAsync(new Preset("枠", 800, 600, BoundsBasis.Frame)));
+        Equal(new WindowBounds(120, 80, 800, 600), screen.Service.GetState(FakeWindows.First)!.Bounds, "枠の基準のプリセット");
+        screen.Form.keepAspect.Checked = true;
+        screen.Await(screen.Form.ApplyPresetAsync(new Preset("縦長", 720, 1280)));
+        var ratio = screen.Form.aspectRatio;
+        True(ratio is { } value && Math.Abs(value - 720.0 / 1280) < 1e-9, "比率固定中はプリセットの比率にする");
+        Equal(3, screen.Form.history.Count, "プリセットの反映もUndoできる");
+    }
+
+    private static void PresetEditor()
+    {
+        var source = new PresetSource(null);
+        using var editor = new PresetEditorForm(source, new Size(1000, 500), BoundsBasis.Frame, passive: true);
+        editor.Show();
+        Application.DoEvents();
+        Equal(5, editor.list.Items.Count, "既定のプリセット");
+        Equal("1000,500,枠", $"{editor.width.Value},{editor.height.Value},{editor.basis.Text}", "現在の対象のサイズを初期値にする");
+        editor.name.Text = "横長";
+        editor.AddPreset();
+        Equal(6, source.Load().Count, "追加");
+        Equal("横長", ((Preset)editor.list.SelectedItem!).Name, "追加した項目を選ぶ");
+        Equal(BoundsBasis.Frame, source.Load()[5].Basis, "基準も保存");
+        editor.MoveSelected(-1);
+        Equal("横長", source.Load()[4].Name, "上へ移動");
+        editor.name.Text = "横長2";
+        editor.width.Value = 1200;
+        editor.ReplaceSelected();
+        Equal(new Preset("横長2", 1200, 500, BoundsBasis.Frame), source.Load()[4], "変更");
+        editor.name.Text = "FHD";
+        editor.AddPreset();
+        True(editor.message.ForeColor == Color.Firebrick && editor.message.Text.Contains("同じ名前", StringComparison.Ordinal), "重複は理由を表示");
+        Equal(6, source.Load().Count, "重複は追加しない");
+        editor.list.SelectedIndex = 4;
+        editor.RemoveSelected();
+        True(source.Load().All(preset => preset.Name != "横長2"), "削除");
+        True(!editor.replace.Enabled && !editor.remove.Enabled, "未選択では変更・削除できない");
+        editor.Close();
+    }
+
+    private static void GuiSettingsPersist()
+    {
+        var store = new SettingsStore(Path.Combine(Path.GetTempPath(), "chunap-ui-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            using (var screen = new TestScreen(store))
+            {
+                True(!File.Exists(store.FilePath), "起動だけでは保存しない");
+                screen.Form.autoRead.Checked = false;
+                Equal(false, store.Load().Gui.AutoRead, "変更した項目を保存");
+                // CLIなど別の経路で追加したプリセットは、GUIの保存で消さない。
+                store.Update(document => document.Presets = Presets.Add(document.Presets, new Preset("外部", 640, 480)));
+                screen.Form.basis.SelectedIndex = 1;
+                screen.Form.keepAspect.Checked = true;
+                screen.Form.alwaysOnTop.Checked = false;
+                screen.Form.previewToggle.PerformClick();
+                var saved = store.Load();
+                Equal(new GuiSettings { AutoRead = false, Basis = BoundsBasis.Client, KeepAspect = true, ToolTopMost = false, PreviewExpanded = true }, saved.Gui, "各項目を保存");
+                True(saved.Presets.Any(preset => preset.Name == "外部"), "別の経路の変更を保持");
+            }
+            using (var screen = new TestScreen(store))
+            {
+                True(!screen.Form.autoRead.Checked && screen.Form.autoApply.Checked, "保存した自動読み取りを復元");
+                Equal(1, screen.Form.basis.SelectedIndex, "保存した基準を復元");
+                True(screen.Form.keepAspect.Checked && !screen.Form.alwaysOnTop.Checked, "比率固定と最前面を復元");
+                True(screen.Form.previewArea.Visible, "プレビューの展開を復元");
+            }
+        }
+        finally { if (Directory.Exists(store.Directory)) Directory.Delete(store.Directory, true); }
+    }
+
+    private static void GuiSettingsBroken()
+    {
+        var store = new SettingsStore(Path.Combine(Path.GetTempPath(), "chunap-ui-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            Directory.CreateDirectory(store.Directory);
+            File.WriteAllText(store.FilePath, "{ broken");
+            using var screen = new TestScreen(store);
+            True(screen.Form.status.Text.Contains("退避", StringComparison.Ordinal), "退避の案内: " + screen.Form.status.Text);
+            True(screen.Form.autoRead.Checked && screen.Form.autoApply.Checked, "既定値で起動");
+            Equal(1, Directory.GetFiles(store.Directory, "settings.json.broken-*").Length, "壊れた設定を退避");
+        }
+        finally { if (Directory.Exists(store.Directory)) Directory.Delete(store.Directory, true); }
+    }
+
     private static void EqualValues(decimal[] expected, NumericUpDown[] actual, string context)
     {
         for (int index = 0; index < expected.Length; index++)
@@ -650,9 +806,9 @@ public static class UiTests
         public ComboBox Targets => Form.targets;
         public NumericUpDown[] Numbers => Form.numbers;
 
-        public TestScreen()
+        public TestScreen(SettingsStore? settings = null)
         {
-            Form = new MainForm(Service, passive: true, targetPicker: Picker);
+            Form = new MainForm(Service, passive: true, targetPicker: Picker, settings: settings);
             // 表示前に受動モードを確認し、他の開発画面へ重ねたりタスクバーへ追加したりしない。
             True(!Form.TopMost, "テストフォームは最前面ではない");
             Equal(0d, Form.Opacity, "テストフォームは完全に透明");
@@ -798,8 +954,12 @@ public static class UiTests
             Placement = states[target].Placement with { ShowCommand = command },
         };
 
+        // 中身の基準の検証のため、左右下8px・上31pxの枠を持つクライアント領域を返す。
         private static WindowState MakeState(WindowIdentity target, WindowBounds bounds) =>
-            new(target, bounds, new WindowPlacement(0, 1, new WindowPoint(-1, -1), new WindowPoint(-1, -1), bounds), true);
+            new(target, bounds, new WindowPlacement(0, 1, new WindowPoint(-1, -1), new WindowPoint(-1, -1), bounds), true)
+            {
+                ClientBounds = new WindowBounds(bounds.X + 8, bounds.Y + 31, bounds.Width - 16, bounds.Height - 39),
+            };
     }
 
     private sealed class FakePicker : IWindowTargetPicker

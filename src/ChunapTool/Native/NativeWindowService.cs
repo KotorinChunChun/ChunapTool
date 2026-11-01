@@ -75,13 +75,14 @@ public sealed class NativeWindowService : IWindowService
         }
         bool canMaximize = (NativeMethods.GetWindowLong(target.Handle, -16) & 0x00010000) != 0;
         WindowBounds? outerBounds = NativeMethods.GetWindowRect(target.Handle, out var outer) ? ToBounds(outer) : null;
+        var clientBounds = GetClientBounds(target.Handle);
         if (!Matches(target))
             return null;
         // 非同期指定は操作方法であり、Undoの比較対象となる位置状態には含めない。
         var savedPlacement = new WindowPlacement(placement.Flags & ~NativeMethods.AsyncWindowPlacement,
             placement.ShowCommand, new WindowPoint(placement.MinPosition.X, placement.MinPosition.Y),
             new WindowPoint(placement.MaxPosition.X, placement.MaxPosition.Y), ToBounds(placement.NormalPosition));
-        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize) { OuterBounds = outerBounds };
+        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize) { OuterBounds = outerBounds, ClientBounds = clientBounds };
     }
 
     public WindowBounds GetWorkArea(WindowIdentity target)
@@ -210,6 +211,17 @@ public sealed class NativeWindowService : IWindowService
         uint capacity = (uint)buffer.Capacity;
         return NativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref capacity)
             ? Path.GetFileName(buffer.ToString()) : "不明";
+    }
+
+    // 最小化中はクライアント領域が0になるため、基準の換算に使わない。
+    private static WindowBounds? GetClientBounds(nint window)
+    {
+        if (!NativeMethods.GetClientRect(window, out var client) || client.Right <= 0 || client.Bottom <= 0)
+            return null;
+        var origin = new NativeMethods.Point();
+        if (!NativeMethods.ClientToScreen(window, ref origin))
+            return null;
+        return new WindowBounds(origin.X, origin.Y, client.Right, client.Bottom);
     }
 
     private static bool TryGetVisualRect(nint window, out NativeMethods.Rect rect)

@@ -24,6 +24,23 @@ Windows 11 x64向けのZIPは、すべて展開してから`ChunapTool.exe`を�
 - 「最前面」はこのツールの表示順だけを切り替えます。対象を操作しても対象を手前へ持ってきません。
 - 終了時に対象ウィンドウを自動復元しません。必要なら閉じる前に「戻す」を使用してください。
 
+### サイズ合わせ（開発中のv0.2.0）
+
+座標欄の下の行で、録画や配信の前にサイズを合わせる操作をします。公開済みのv0.1.2には含まれません。
+
+- 「基準」: 「枠」は見えるウィンドウ枠、「中身」はタイトルバーと枠を除いたクライアント領域です。X/Y/W/Hは選んだ基準の値で表示・入力します。作業領域へ収める判定は、どちらの基準でも見える枠で行います。基準を切り替えても、未適用の入力値は同じ位置・サイズを指すよう換算して保ちます。
+- 「比率固定」: ONにした時点の対象の縦横比を保ち、WかHを編集するともう一方を自動で更新します。作業領域へ収めるために縮める場合も比率を保ちます。対象を切り替えると、新しい対象の比率にします。
+- 「プリセット ▼」: 登録したサイズを選ぶと、位置を変えずにサイズだけを反映します（Undoできます）。既定はFHD 1920×1080、HD 1280×720、縦長 720×1280、1024×768、800×600で、いずれも中身の基準です。比率固定中に選ぶと、そのプリセットの比率に切り替えます。
+- 「プリセットの管理…」: プリセットの追加・変更・削除・並べ替えを行います。名前は大文字小文字を区別せず重複できません。幅・高さは32〜100000です。
+
+### 設定の保存（開発中のv0.2.0）
+
+自動読み取り、自動反映、画面外可、最前面、基準、比率固定、プレビューの展開と、プリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存し、次回の起動で復元します。Undo履歴は保存しません。
+
+- 変更するたびに、項目ごとに保存します。保存の前にファイルを読み直すため、コマンドラインで変えた他の項目を上書きしません。起動中の画面には、コマンドラインの変更は次回の起動から反映されます。
+- `ChunapTool.exe --settings-dir <フォルダー>`で、別の場所の設定を使えます。
+- 読めない設定ファイルは`settings.json.broken-<日時>`へ退避し、既定値で起動して画面下に理由を表示します。新しい版で作られた設定は、退避も上書きもせず、既定値で起動して保存しません。
+
 ## プレビュー
 
 初期状態は折りたたみです。Xラベル左の「▼」で展開し、「▲」で折りたたみます。折りたたみ中はDWM登録を解除して処理を停止し、画面もコンパクトになります。展開し直すと直前の表示領域の高さへ戻します。
@@ -61,15 +78,25 @@ chunap list --filter メモ帳
 chunap get --process notepad.exe --json > before.json
 chunap set --process notepad.exe --x 100 --y 80 --width 1280 --height 720
 chunap restore --process notepad.exe --from before.json
+chunap set --process obs64.exe --basis client --width 1280 --height 720
+chunap set --process obs64.exe --basis client --width 1600 --keep-aspect
+chunap preset add 配信 --width 1280 --height 720
+chunap preset apply 配信 --process obs64.exe
+chunap config set gui.basis client
 ```
 
-- 現在のコマンド: `list`、`pick`、`get`、`set`、`maximize`、`unmaximize`、`constrain`、`restore`、`version`、`help`。その他の機能は[v0.2.0設計書](../dev/history/v0.2.0/v0.2.0-design.md)の順に追加します。
+- 現在のコマンド: `list`、`pick`、`get`、`set`、`maximize`、`unmaximize`、`constrain`、`restore`、`preset`、`config`、`version`、`help`。その他の機能は[v0.2.0設計書](../dev/history/v0.2.0/v0.2.0-design.md)の順に追加します。
 - 対象は`--hwnd`、`--pid`、`--title`、`--title-exact`、`--process`、`--class`、`--at x,y`、`--foreground`を組み合わせて指定します。一致が0件なら終了コード3、2件以上なら終了コード4で、何も変更しません。ChunapTool自身は対象外です。
 - `--json`で結果をJSONで出力します（日本語は`\uXXXX`で出力し、コンソールのコードページに依存しません）。変更系のコマンドは、変更前（`before`）と変更後（`after`）の状態を返します。
 - `--dry-run`は変更せずに結果だけを計算します。オプションの綴り誤りや値の誤りは、対象を探す前に終了コード2で拒否します。
 - `set`は、指定しなかった値を現在の値で補い、`--allow-outside`がなければ作業領域へ収めます（GUIの「画面外可」OFFと同じ）。
+- `--basis client`（`get`・`set`）は中身（クライアント領域）を基準にします。既定は`frame`（見える枠）です。`get --json`は基準にかかわらず`frame`と`client`の両方を出力します。
+- `set --keep-aspect`は現在の縦横比、`--aspect 16:9`は指定の比率を保ちます。幅と高さのどちらか一方だけを指定してください。
+- `preset list|add|remove|rename|move|apply`でプリセットを扱います。`preset apply`は位置を変えずにサイズだけを変えます。存在しない名前や重複は終了コード2です。
+- `config path|get [キー]|set <キー> <値>|reset`で設定を扱います。キーは`gui.autoRead`、`gui.autoApply`、`gui.allowOutside`、`gui.toolTopMost`、`gui.basis`、`gui.keepAspect`、`gui.previewExpanded`です。`reset`はGUIの項目を既定値へ戻し、プリセットは残します。
+- `--settings-dir <フォルダー>`で設定ファイルの場所を変えられます。読めない設定ファイルは終了コード8で、ファイルを変更しません（`config reset`は退避してから作り直します）。
 - CLIで直接操作した結果は、GUIの「戻す」の履歴に入りません。`get --json`の出力を保存しておくと、`restore --from`で戻せます。
-- 終了コード: 0 成功、1 失敗、2 引数の誤り、3 対象なし、4 対象が複数、5 応答なし・拒否、7 反映を確認できない。
+- 終了コード: 0 成功、1 失敗、2 引数の誤り、3 対象なし、4 対象が複数、5 応答なし・拒否、7 反映を確認できない、8 設定ファイルの不正。
 
 ## ビルドとテスト
 
@@ -85,7 +112,7 @@ pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -Cli
 pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -CliNative
 ```
 
-通常のテストは座標制約・履歴と管理pipeの要求処理の検証です。`-Ui`は不可視・非アクティブな自フォームと偽サービスで画面状態・配置座標・サムネイル管理を確認し、他の画面へ入力しません。実描画やDWMの検証ではありません。`-Cli`は`chunap.exe`を実行して、引数の検査・終了コード・一覧を確かめます（ウィンドウを変更しません）。`-CliNative`は確認用ウィンドウを起動し、`chunap.exe`で操作した結果を、Win32で直接読んだ値と突き合わせます。`--instance`で分離した検証用のGUIも起動するため、普段使っているChunapToolには触れません。通常のテスト、`-Ui`、`-Cli`は、mainへのpushとプルリクエストでGitHub Actions（`windows-latest`）でも実行します。`-Native`は専用のテストウィンドウを一時的に起動してWin32連携を検証するため、他の画面作業をしていない対話デスクトップで実行してください。手動確認用ウィンドウは次で起動できます。
+通常のテストは座標制約・履歴と管理pipeの要求処理の検証です。`-Ui`は不可視・非アクティブな自フォームと偽サービスで画面状態・配置座標・サムネイル管理を確認し、他の画面へ入力しません。実描画やDWMの検証ではありません。`-Cli`は`chunap.exe`を実行して、引数の検査・終了コード・一覧と、一時フォルダーの設定に対する`preset`・`config`を確かめます（ウィンドウと利用者の設定を変更しません）。`-CliNative`は確認用ウィンドウを起動し、`chunap.exe`で操作した結果を、Win32で直接読んだ値と突き合わせます。`--instance`で分離した検証用のGUIも起動するため、普段使っているChunapToolには触れません。通常のテスト、`-Ui`、`-Cli`は、mainへのpushとプルリクエストでGitHub Actions（`windows-latest`）でも実行します。`-Native`は専用のテストウィンドウを一時的に起動してWin32連携を検証するため、他の画面作業をしていない対話デスクトップで実行してください。手動確認用ウィンドウは次で起動できます。
 
 ```powershell
 ./tests/ChunapTool.Tests/bin/Debug/net10.0-windows10.0.19041.0/ChunapTool.Tests.exe --fixture

@@ -17,6 +17,16 @@ internal static class Program
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        // 設定の場所は--settings-dirで変えられる（検証用の起動が利用者の設定に触れないようにする）。
+        Core.SettingsStore settings;
+        try { settings = new Core.SettingsStore(Option(args, "--settings-dir") ?? Core.SettingsStore.DefaultDirectory); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            if (!args.Contains("--passive"))
+                MessageBox.Show("--settings-dir のフォルダー名が不正です: " + ex.Message, WindowTitle.Create(),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         var managementId = instance is null ? "chunap-tool" : "chunap-tool." + instance;
         using var singleInstance = new Mutex(true, instance is null ? @"Local\ChunapTool" : @"Local\ChunapTool." + instance, out var firstInstance);
         if (!firstInstance)
@@ -35,7 +45,7 @@ internal static class Program
         }
         try
         {
-            var window = new MainForm(new Native.NativeWindowService(), args.Contains("--passive"));
+            var window = new MainForm(new Native.NativeWindowService(), args.Contains("--passive"), settings: settings);
             using var context = new KotorinToys.Integration.ManagedToolContext(managementId, window,
                 args.Contains("--startup"), () => window.ManagementStopBlockReason);
             Application.Run(context);

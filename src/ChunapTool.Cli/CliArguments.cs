@@ -7,7 +7,7 @@ namespace ChunapTool.Cli;
 internal sealed class CliArguments
 {
     // 値を取らないオプション。
-    internal static readonly HashSet<string> Flags = ["json", "dry-run", "allow-outside", "foreground", "help"];
+    internal static readonly HashSet<string> Flags = ["json", "dry-run", "allow-outside", "foreground", "help", "keep-aspect"];
 
     private readonly Dictionary<string, string?> options = new(StringComparer.Ordinal);
     private readonly HashSet<string> used = new(StringComparer.Ordinal);
@@ -72,6 +72,13 @@ internal sealed class CliArguments
             || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var y))
             throw CliException.Usage($"--{name} は「x,y」の形式で指定してください: {text}");
         return new Point(x, y);
+    }
+
+    internal BoundsBasis Basis(BoundsBasis fallback = BoundsBasis.Frame)
+    {
+        var text = Text("basis");
+        if (text is null) return fallback;
+        return BoundsBases.TryParse(text, out var basis) ? basis : throw CliException.Usage($"--basis には frame か client を指定してください: {text}");
     }
 
     internal TimeSpan Timeout => TimeSpan.FromMilliseconds(Integer("timeout", 100, 60000) ?? 3000);

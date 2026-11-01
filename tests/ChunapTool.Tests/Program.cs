@@ -50,6 +50,8 @@ internal static class Program
         }
 
         ManagementTests.Run(Path.GetTempPath());
-        return CoreTests.Run();
+        int core = CoreTests.Run();
+        int settings = SettingsTests.Run();
+        return core == 0 && settings == 0 ? 0 : 1;
     }
 }

@@ -9,6 +9,7 @@ namespace ChunapTool.Cli;
 internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker picker, TextWriter output, TextWriter error)
 {
     private readonly WindowOperations operations = new(windows);
+    private SettingsStore settings = new(SettingsStore.DefaultDirectory);
 
     internal static int Run(string[] args) =>
         new CliApplication(new NativeWindowService(), new WindowTargetPicker(), Console.Out, Console.Error)
@@ -23,6 +24,15 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
             var arguments = CliArguments.Parse(args);
             json = arguments.Flag("json");
             command = arguments.Word(0) ?? "help";
+            // 共通オプション。設定を使わないコマンドで指定しても誤りにしない。
+            if (arguments.Text("settings-dir") is { } directory)
+            {
+                try { settings = new SettingsStore(directory); }
+                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    throw CliException.Usage($"--settings-dir のフォルダー名が不正です: {directory}");
+                }
+            }
             var result = await ExecuteAsync(command, arguments);
             result.Json["ok"] = true;
             result.Json["command"] = command;
@@ -51,7 +61,8 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
     // 引数はすべて読み取って検査してから（EnsureAllUsed）、対象の解決と変更を行う。綴り誤りのオプションで対象を動かさない。
     private async Task<CommandResult> ExecuteAsync(string command, CliArguments arguments)
     {
-        if (arguments.Words.Count > (command == "help" ? 2 : 1))
+        // サブコマンドと名前を取るpreset・configは、それぞれで語数を検査する。
+        if (command is not "preset" and not "config" && arguments.Words.Count > (command == "help" ? 2 : 1))
             throw CliException.Usage("余分な引数があります: " + string.Join(" ", arguments.Words.Skip(command == "help" ? 2 : 1)));
         switch (command)
         {
@@ -77,23 +88,48 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
             case "get":
                 {
                     var criteria = arguments.Criteria();
+                    var basis = arguments.Basis();
                     arguments.EnsureAllUsed();
                     var entry = Resolve(criteria);
                     var state = operations.GetState(entry.Identity);
-                    return new(new JsonObject { ["target"] = CliJson.Target(entry), ["state"] = CliJson.State(state) },
-                        $"{Describe(entry)}\n{DescribeState(state)}");
+                    if (basis == BoundsBasis.Client && state.ClientBounds is null)
+                        throw new CliException(ExitCodes.Failure, "operation-failed", "対象のクライアント領域を取得できません（最小化中など）。");
+                    return new(new JsonObject
+                    {
+                        ["target"] = CliJson.Target(entry), ["basis"] = BoundsBases.Name(basis),
+                        ["bounds"] = CliJson.Bounds(BoundsBases.Read(state, basis)), ["state"] = CliJson.State(state),
+                    }, $"{Describe(entry)}\n{DescribeState(state, basis)}");
                 }
             case "set":
                 {
                     var criteria = arguments.Criteria();
                     var request = new BoundsRequest(arguments.Integer("x"), arguments.Integer("y"),
-                        arguments.Integer("width", 1), arguments.Integer("height", 1));
+                        arguments.Integer("width", 1), arguments.Integer("height", 1)) { Basis = arguments.Basis() };
                     if (request.IsEmpty) throw CliException.Usage("set には --x --y --width --height のいずれかを指定してください。");
+                    var (keepAspect, aspectText) = (arguments.Flag("keep-aspect"), arguments.Text("aspect"));
+                    if (keepAspect && aspectText is not null) throw CliException.Usage("--keep-aspect と --aspect は同時に指定できません。");
+                    double? aspect = null;
+                    if (aspectText is not null)
+                        aspect = AspectRatio.TryParse(aspectText, out var ratio) ? ratio
+                            : throw CliException.Usage($"--aspect は「16:9」の形式か正の数で指定してください: {aspectText}");
+                    if ((keepAspect || aspect is not null) && request.Width is not null && request.Height is not null)
+                        throw CliException.Usage("比率を固定する場合は、--width と --height のどちらか一方だけを指定してください。");
                     var (allowOutside, dryRun, timeout) = (arguments.Flag("allow-outside"), arguments.Flag("dry-run"), arguments.Timeout);
                     arguments.EnsureAllUsed();
                     var entry = Resolve(criteria);
-                    return Changed(entry, await operations.SetBoundsAsync(entry.Identity, request, allowOutside, dryRun, timeout), "位置・サイズ");
+                    if (keepAspect)
+                    {
+                        // 比率は対象の現在のサイズ（指定の基準）から求める。
+                        var current = BoundsBases.Read(operations.GetState(entry.Identity), request.Basis);
+                        aspect = AspectRatio.Of(current.Width, current.Height);
+                    }
+                    var result = await operations.SetBoundsAsync(entry.Identity, request with { Aspect = aspect }, allowOutside, dryRun, timeout);
+                    return Changed(entry, result, "位置・サイズ");
                 }
+            case "preset":
+                return await PresetAsync(arguments);
+            case "config":
+                return Config(arguments);
             case "maximize":
             case "unmaximize":
                 {
@@ -133,6 +169,146 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
             default:
                 throw CliException.Usage($"不明なコマンドです: {command}（chunap help で一覧を表示）");
         }
+    }
+
+    private async Task<CommandResult> PresetAsync(CliArguments arguments)
+    {
+        var sub = arguments.Word(1) ?? throw CliException.Usage("preset のサブコマンドを指定してください（list add remove rename move apply）。");
+        switch (sub)
+        {
+            case "list":
+                {
+                    Words(arguments, 2, "chunap preset list");
+                    arguments.EnsureAllUsed();
+                    var presets = settings.Load().Presets;
+                    var text = presets.Count == 0 ? "プリセットはありません。"
+                        : string.Join("\n", presets.Select((preset, i) => $"{i + 1}. {preset}"));
+                    return new(new JsonObject { ["path"] = settings.FilePath, ["presets"] = CliJson.Presets(presets) }, text);
+                }
+            case "add":
+                {
+                    Words(arguments, 3, "chunap preset add <名前> --width N --height N [--basis client|frame]");
+                    var width = arguments.Integer("width") ?? throw CliException.Usage("preset add には --width と --height を指定してください。");
+                    var height = arguments.Integer("height") ?? throw CliException.Usage("preset add には --width と --height を指定してください。");
+                    var preset = new Preset(arguments.Word(2)!, width, height, arguments.Basis(BoundsBasis.Client));
+                    arguments.EnsureAllUsed();
+                    return PresetChanged(UpdatePresets(presets => Presets.Add(presets, preset)), $"プリセットを追加しました: {preset}");
+                }
+            case "remove":
+                {
+                    Words(arguments, 3, "chunap preset remove <名前>");
+                    arguments.EnsureAllUsed();
+                    var name = arguments.Word(2)!;
+                    return PresetChanged(UpdatePresets(presets => Presets.Remove(presets, name)), $"プリセットを削除しました: {name}");
+                }
+            case "rename":
+                {
+                    Words(arguments, 4, "chunap preset rename <名前> <新しい名前>");
+                    arguments.EnsureAllUsed();
+                    var (name, newName) = (arguments.Word(2)!, arguments.Word(3)!);
+                    return PresetChanged(UpdatePresets(presets => Presets.Rename(presets, name, newName)), $"プリセットの名前を変更しました: {name} → {newName}");
+                }
+            case "move":
+                {
+                    Words(arguments, 3, "chunap preset move <名前> --to <順番（1から）>");
+                    var position = arguments.Integer("to") ?? throw CliException.Usage("preset move には --to <順番（1から）> を指定してください。");
+                    arguments.EnsureAllUsed();
+                    var name = arguments.Word(2)!;
+                    return PresetChanged(UpdatePresets(presets => Presets.Move(presets, name, position)), $"プリセットを{position}番目へ移動しました: {name}");
+                }
+            case "apply":
+                {
+                    Words(arguments, 3, "chunap preset apply <名前> <対象の指定>");
+                    var criteria = arguments.Criteria();
+                    var (allowOutside, dryRun, timeout) = (arguments.Flag("allow-outside"), arguments.Flag("dry-run"), arguments.Timeout);
+                    arguments.EnsureAllUsed();
+                    var name = arguments.Word(2)!;
+                    var preset = Presets.Find(settings.Load().Presets, name)
+                        ?? throw CliException.Usage($"プリセットがありません: {name}（chunap preset list で一覧を表示）");
+                    var entry = Resolve(criteria);
+                    var result = await operations.ApplyPresetAsync(entry.Identity, preset, allowOutside, dryRun, timeout);
+                    var changed = Changed(entry, result, $"プリセット「{preset.Name}」の適用");
+                    changed.Json["preset"] = CliJson.Preset(preset);
+                    return changed;
+                }
+            default:
+                throw CliException.Usage($"不明なサブコマンドです: preset {sub}（list add remove rename move apply）");
+        }
+    }
+
+    // 一覧の編集は、名前の重複・存在しない名前などを引数の誤り（終了コード2）とする。
+    private SettingsDocument UpdatePresets(Func<IReadOnlyList<Preset>, IReadOnlyList<Preset>> change)
+    {
+        try { return settings.Update(document => document.Presets = change(document.Presets)); }
+        catch (ArgumentException ex) { throw CliException.Usage(ex.Message); }
+    }
+
+    private CommandResult PresetChanged(SettingsDocument document, string message) =>
+        new(new JsonObject { ["path"] = settings.FilePath, ["presets"] = CliJson.Presets(document.Presets) }, message);
+
+    private CommandResult Config(CliArguments arguments)
+    {
+        var sub = arguments.Word(1) ?? throw CliException.Usage("config のサブコマンドを指定してください（path get set reset）。");
+        switch (sub)
+        {
+            case "path":
+                Words(arguments, 2, "chunap config path");
+                arguments.EnsureAllUsed();
+                return new(new JsonObject { ["path"] = settings.FilePath, ["exists"] = File.Exists(settings.FilePath) }, settings.FilePath);
+            case "get":
+                {
+                    if (arguments.Words.Count > 3) throw CliException.Usage("使い方: chunap config get [キー]");
+                    var name = arguments.Word(2) is { } key ? GuiKey(key) : null;
+                    arguments.EnsureAllUsed();
+                    var gui = settings.Load().Gui;
+                    if (name is not null)
+                        return new(new JsonObject { ["key"] = "gui." + name, ["value"] = CliJson.SettingValue(gui.Get(name)) }, gui.Get(name));
+                    var all = new JsonObject();
+                    foreach (var item in GuiSettings.Keys) all["gui." + item] = CliJson.SettingValue(gui.Get(item));
+                    return new(new JsonObject { ["path"] = settings.FilePath, ["values"] = all },
+                        string.Join("\n", GuiSettings.Keys.Select(item => $"gui.{item} = {gui.Get(item)}")));
+                }
+            case "set":
+                {
+                    Words(arguments, 4, "chunap config set <キー> <値>");
+                    arguments.EnsureAllUsed();
+                    var (name, value) = (GuiKey(arguments.Word(2)!), arguments.Word(3)!);
+                    // 値の誤りは、設定ファイルを読む前に終了コード2で拒否する。
+                    try { new GuiSettings().With(name, value); }
+                    catch (ArgumentException ex) { throw CliException.Usage(ex.Message); }
+                    var document = settings.Update(document => document.Gui = document.Gui.With(name, value));
+                    var saved = document.Gui.Get(name);
+                    return new(new JsonObject { ["key"] = "gui." + name, ["value"] = CliJson.SettingValue(saved), ["path"] = settings.FilePath },
+                        $"gui.{name} = {saved}（起動中のGUIには、次回の起動から反映されます）");
+                }
+            case "reset":
+                {
+                    Words(arguments, 2, "chunap config reset");
+                    arguments.EnsureAllUsed();
+                    // 読める設定はGUIの項目だけを既定値へ戻し、プリセットなどは残す。読めない設定は退避してから既定値で作り直す。
+                    string? backup = null;
+                    try { settings.Update(document => document.Gui = new GuiSettings()); }
+                    catch (SettingsException ex) when (!ex.NewerSchema)
+                    {
+                        backup = settings.Backup();
+                        settings.Save(new SettingsDocument());
+                    }
+                    return new(new JsonObject { ["path"] = settings.FilePath, ["backup"] = backup },
+                        backup is null ? "GUIの設定を既定値へ戻しました（プリセットは残しています）。"
+                            : $"読めない設定を {backup} へ退避し、既定値で作り直しました。");
+                }
+            default:
+                throw CliException.Usage($"不明なサブコマンドです: config {sub}（path get set reset）");
+        }
+    }
+
+    private static string GuiKey(string key) =>
+        key.StartsWith("gui.", StringComparison.Ordinal) && GuiSettings.Keys.Contains(key[4..]) ? key[4..]
+            : throw CliException.Usage($"不明な設定です: {key}（{string.Join("、", GuiSettings.Keys.Select(name => "gui." + name))}）");
+
+    private static void Words(CliArguments arguments, int count, string usage)
+    {
+        if (arguments.Words.Count != count) throw CliException.Usage("使い方: " + usage);
     }
 
     private CommandResult List(string filter)
@@ -178,14 +354,16 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
             ["dryRun"] = result.After is null,
             ["target"] = CliJson.Target(entry),
             ["before"] = CliJson.State(result.Before),
-            ["requested"] = result.Requested is { } requested ? CliJson.Bounds(requested) : null,
+            ["requested"] = result.Requested is { } requested ? CliJson.Requested(requested, result.Basis, result.RequestedInBasis) : null,
             ["after"] = result.After is { } after ? CliJson.State(after) : null,
             ["warnings"] = new JsonArray(result.Warnings.Select(warning => (JsonNode)warning).ToArray()),
         };
         var lines = new List<string> { Describe(entry) };
+        var basis = result.Basis;
+        var label = basis == BoundsBasis.Client ? "中身" : "見える枠";
         lines.Add(result.After is null
-            ? $"{action}の試行（変更なし）: 要求 {DescribeBounds(result.Requested)}"
-            : $"{action}: {DescribeBounds(result.Before.Bounds)} → {DescribeBounds(result.After.Bounds)}");
+            ? $"{action}の試行（変更なし）: 要求（{label}） {DescribeBounds(result.RequestedInBasis ?? result.Requested)}"
+            : $"{action}（{label}）: {DescribeBounds(BoundsBases.Read(result.Before, basis))} → {DescribeBounds(BoundsBases.Read(result.After, basis))}");
         lines.AddRange(result.Warnings.Select(warning => "注意: " + warning));
         return new(json, string.Join("\n", lines));
     }
@@ -208,8 +386,9 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
     private static string DescribeBounds(WindowBounds? bounds) =>
         bounds is { } b ? $"X={b.X} Y={b.Y} W={b.Width} H={b.Height}" : "なし";
 
-    private static string DescribeState(WindowState state) =>
-        $"見える枠: {DescribeBounds(state.Bounds)}"
+    private static string DescribeState(WindowState state, BoundsBasis basis) =>
+        (basis == BoundsBasis.Client ? $"中身: {DescribeBounds(BoundsBases.Read(state, basis))}\n" : "")
+        + $"見える枠: {DescribeBounds(state.Bounds)}"
         + (state.IsMaximized ? "（最大化中）" : state.IsMinimized ? "（最小化中）" : "");
 
     private static string Version

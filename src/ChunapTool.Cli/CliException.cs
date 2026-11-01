@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ChunapTool.Core;
 using ChunapTool.Operations;
 
 namespace ChunapTool.Cli;
@@ -29,6 +30,7 @@ internal sealed class CliException(int exitCode, string code, string message, ob
     internal static CliException From(Exception exception) => exception switch
     {
         CliException cli => cli,
+        SettingsException => new(ExitCodes.Settings, "settings-invalid", exception.Message),
         TargetGoneException => new(ExitCodes.NotFound, "target-gone", exception.Message),
         Win32Exception { NativeErrorCode: 1400 } => new(ExitCodes.NotFound, "target-gone", exception.Message),
         Win32Exception => new(ExitCodes.Refused, "target-refused", exception.Message),

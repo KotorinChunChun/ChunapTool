@@ -4,7 +4,7 @@ Windowsのウィンドウを選び、位置・サイズ・最大化を調整す�
 
 ## 起動
 
-[Releases](https://github.com/KotorinChunChun/ChunapTool/releases)の`ChunapTool-0.1.2-setup.exe`で利用者単位に導入できます。KotorinToys 0.1.2以降の本体からの導入・更新・削除にも対応します。[導入と保持・削除の手順](docs/install.md)を確認してください。ランタイム同梱の未署名開発版です。ChunapToolは設定・Undo履歴をファイルへ保存しないため（起動ごとに既定値）、更新・削除で失われる利用者データはありません。
+[Releases](https://github.com/KotorinChunChun/ChunapTool/releases)の`ChunapTool-0.1.2-setup.exe`で利用者単位に導入できます。KotorinToys 0.1.2以降の本体からの導入・更新・削除にも対応します。[導入と保持・削除の手順](docs/install.md)を確認してください。ランタイム同梱の未署名開発版です。v0.1.2は設定・Undo履歴をファイルへ保存しないため（起動ごとに既定値）、更新・削除で失われる利用者データはありません（開発中のv0.2.0では、設定とプリセットを`%LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json`へ保存します）。
 
 Windows 11 x64向けの[ポータブル版](https://github.com/KotorinChunChun/ChunapTool/releases/tag/v0.1.1)はZIPをすべて展開し、`ChunapTool.exe`を起動します。.NET 10ランタイムを同梱しています。配布ZIPは未署名です。同じリリースの`SHA256SUMS.txt`でハッシュを確認できます。
 

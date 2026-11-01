@@ -64,7 +64,101 @@ internal static class CliTests
             Equal(windows.Count, json["count"]!.GetValue<int>(), "件数");
             True(windows.All(w => w!["process"]!.GetValue<string>() is not "ChunapTool.exe" and not "chunap.exe"), "自身を除外");
         }),
+        ("基準・比率固定の指定の誤りは対象を探す前に終了コード2", () =>
+        {
+            Usage("set", "--pid", "1", "--width", "10", "--basis", "outer", "--json");
+            Usage("set", "--pid", "1", "--width", "100", "--height", "100", "--keep-aspect", "--json");
+            Usage("set", "--pid", "1", "--width", "100", "--height", "100", "--aspect", "16:9", "--json");
+            Usage("set", "--pid", "1", "--width", "100", "--keep-aspect", "--aspect", "16:9", "--json");
+            Usage("set", "--pid", "1", "--width", "100", "--aspect", "16:0", "--json");
+            Usage("get", "--pid", "1", "--basis", "outer", "--json");
+        }),
+        ("preset は一時フォルダーの設定で追加・名前変更・移動・削除", () => WithSettings(dir =>
+        {
+            var list = Json("preset", "list", "--settings-dir", dir, "--json");
+            Equal(5, list["presets"]!.AsArray().Count, "既定のプリセット");
+            True(!File.Exists(Path.Combine(dir, "settings.json")), "一覧だけでは保存しない");
+            var added = Json("preset", "add", "配信", "--width", "1280", "--height", "720", "--settings-dir", dir, "--json");
+            Equal("client", added["presets"]!.AsArray()[5]!["basis"]!.GetValue<string>(), "既定の基準はclient");
+            Json("preset", "add", "枠", "--width", "800", "--height", "600", "--basis", "frame", "--settings-dir", dir, "--json");
+            Json("preset", "rename", "配信", "配信HD", "--settings-dir", dir, "--json");
+            var moved = Json("preset", "move", "配信HD", "--to", "1", "--settings-dir", dir, "--json")["presets"]!.AsArray();
+            Equal("配信HD", moved[0]!["name"]!.GetValue<string>(), "先頭へ移動");
+            var removed = Json("preset", "remove", "fhd", "--settings-dir", dir, "--json")["presets"]!.AsArray();
+            True(removed.All(p => p!["name"]!.GetValue<string>() != "FHD"), "大文字小文字を区別せず削除");
+            var text = Cli("preset", "list", "--settings-dir", dir);
+            True(text.Output.Contains("配信HD", StringComparison.Ordinal), "文章の一覧に日本語の名前");
+        })),
+        ("preset の重複・存在しない名前・語数の誤りは終了コード2", () => WithSettings(dir =>
+        {
+            Usage("preset", "add", "HD", "--width", "1280", "--height", "720", "--settings-dir", dir, "--json");
+            Usage("preset", "add", "x", "--width", "10", "--height", "720", "--settings-dir", dir, "--json");
+            Usage("preset", "add", "x", "--width", "100", "--settings-dir", dir, "--json");
+            Usage("preset", "remove", "none", "--settings-dir", dir, "--json");
+            Usage("preset", "move", "HD", "--to", "9", "--settings-dir", dir, "--json");
+            Usage("preset", "rename", "HD", "--settings-dir", dir, "--json");
+            Usage("preset", "list", "extra", "--settings-dir", dir, "--json");
+            Usage("preset", "unknown", "--settings-dir", dir, "--json");
+            Usage("preset", "apply", "none", "--pid", "1", "--settings-dir", dir, "--json");
+            True(!File.Exists(Path.Combine(dir, "settings.json")), "失敗した操作では保存しない");
+        })),
+        ("config で取得・変更・既定値への復帰", () => WithSettings(dir =>
+        {
+            var path = Json("config", "path", "--settings-dir", dir, "--json");
+            Equal(Path.Combine(dir, "settings.json"), path["path"]!.GetValue<string>(), "設定ファイルの場所");
+            True(!path["exists"]!.GetValue<bool>(), "まだ作られていない");
+            True(Json("config", "get", "gui.autoRead", "--settings-dir", dir, "--json")["value"]!.GetValue<bool>(), "既定値");
+            Json("config", "set", "gui.autoRead", "off", "--settings-dir", dir, "--json");
+            Json("config", "set", "gui.basis", "client", "--settings-dir", dir, "--json");
+            Json("preset", "add", "残す", "--width", "100", "--height", "100", "--settings-dir", dir, "--json");
+            var all = Json("config", "get", "--settings-dir", dir, "--json")["values"]!;
+            True(!all["gui.autoRead"]!.GetValue<bool>() && all["gui.basis"]!.GetValue<string>() == "client", "変更を保存");
+            Json("config", "reset", "--settings-dir", dir, "--json");
+            all = Json("config", "get", "--settings-dir", dir, "--json")["values"]!;
+            True(all["gui.autoRead"]!.GetValue<bool>() && all["gui.basis"]!.GetValue<string>() == "frame", "既定値へ戻す");
+            True(Json("preset", "list", "--settings-dir", dir, "--json")["presets"]!.AsArray().Any(p => p!["name"]!.GetValue<string>() == "残す"), "プリセットは残す");
+            Usage("config", "get", "autoRead", "--settings-dir", dir, "--json");
+            Usage("config", "set", "gui.autoRead", "yes", "--settings-dir", dir, "--json");
+            Usage("config", "set", "gui.noSuch", "true", "--settings-dir", dir, "--json");
+            Usage("config", "set", "gui.autoRead", "--settings-dir", dir, "--json");
+        })),
+        ("読めない設定は終了コード8で変更せず、reset で退避して作り直す", () => WithSettings(dir =>
+        {
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, "settings.json");
+            File.WriteAllText(file, "{ broken");
+            foreach (var args in new[] { new[] { "config", "get" }, ["preset", "list"], ["config", "set", "gui.autoRead", "true"], ["preset", "apply", "HD", "--pid", "1"] })
+            {
+                var run = Cli([.. args, "--settings-dir", dir, "--json"]);
+                Equal(8, run.ExitCode, "終了コード: " + string.Join(" ", args));
+                Equal("settings-invalid", run.Json!["error"]!["code"]!.GetValue<string>(), "エラーの種類");
+            }
+            Equal("{ broken", File.ReadAllText(file), "壊れた設定を上書きしない");
+            var reset = Json("config", "reset", "--settings-dir", dir, "--json");
+            var backup = reset["backup"]!.GetValue<string>();
+            Equal("{ broken", File.ReadAllText(backup), "退避したファイル");
+            Equal(5, Json("preset", "list", "--settings-dir", dir, "--json")["presets"]!.AsArray().Count, "既定値で作り直す");
+        })),
+        ("新しい版の設定は終了コード8で、reset でも上書きしない", () => WithSettings(dir =>
+        {
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, "settings.json");
+            const string newer = """{ "schemaVersion": 99 }""";
+            File.WriteAllText(file, newer);
+            Equal(8, Cli("config", "reset", "--settings-dir", dir, "--json").ExitCode, "reset");
+            Equal(8, Cli("config", "get", "--settings-dir", dir, "--json").ExitCode, "get");
+            Equal(newer, File.ReadAllText(file), "そのまま残す");
+            Equal(1, Directory.GetFiles(dir).Length, "退避もしない");
+        })),
     ]);
+
+    // 利用者の設定（%LOCALAPPDATA%）に触れないよう、検証ごとに一時フォルダーを使う。
+    private static void WithSettings(Action<string> test)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chunap-cli-" + Guid.NewGuid().ToString("N"));
+        try { test(dir); }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
 
     internal static int RunNative()
     {
@@ -173,6 +267,49 @@ internal static class CliTests
                     Equal(7, run.ExitCode, "終了コード");
                     Equal("not-confirmed", run.Json!["error"]!["code"]!.GetValue<string>(), "エラーの種類");
                 }),
+                ("get --basis client の中身はWin32のクライアント領域と一致", () =>
+                {
+                    var json = Json("get", "--hwnd", a.Hex, "--basis", "client", "--json");
+                    Equal(Win32.Client(a.Handle), Rect(json["bounds"]!), "bounds");
+                    Equal(Win32.Client(a.Handle), Rect(json["state"]!["client"]!), "state.client");
+                }),
+                ("set --basis client で中身の大きさを指定どおりにする", () =>
+                {
+                    var after = Json("set", "--hwnd", a.Hex, "--basis", "client", "--width", "640", "--height", "360", "--json");
+                    Equal(new Size(640, 360), Win32.Client(a.Handle).Size, "実測の中身");
+                    Equal("client", after["requested"]!["basis"]!.GetValue<string>(), "要求の基準");
+                    Equal(new Size(640, 360), Rect(after["after"]!["client"]!).Size, "結果の中身");
+                }),
+                ("同じ要求をframeとclientで出すと、差は枠の太さと一致", () =>
+                {
+                    Json("set", "--hwnd", a.Hex, "--x", "100", "--y", "100", "--width", "700", "--height", "400", "--json");
+                    var frame = Win32.Frame(a.Handle);
+                    var client = Win32.Client(a.Handle);
+                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--x", "100", "--y", "100", "--width", "700", "--height", "400", "--json");
+                    var byClient = Win32.Frame(a.Handle);
+                    Equal(new Rectangle(100, 100, 700, 400), Win32.Client(a.Handle), "中身が要求どおり");
+                    Equal(new Size(frame.Width - client.Width, frame.Height - client.Height), new Size(byClient.Width - 700, byClient.Height - 400), "枠の太さの差");
+                    Equal(new Point(100 - (client.X - frame.X), 100 - (client.Y - frame.Y)), byClient.Location, "左上の差");
+                }),
+                ("--keep-aspect と --aspect で縦横比を保つ", () =>
+                {
+                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--x", "60", "--y", "60", "--width", "640", "--height", "360", "--json");
+                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--width", "800", "--keep-aspect", "--json");
+                    Equal(new Size(800, 450), Win32.Client(a.Handle).Size, "現在の16:9を保つ");
+                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--height", "480", "--aspect", "4:3", "--json");
+                    Equal(new Size(640, 480), Win32.Client(a.Handle).Size, "指定の4:3");
+                }),
+                ("preset add と apply で中身を指定の大きさにし、位置は変えない", () => WithSettings(dir =>
+                {
+                    Json("preset", "add", "検証", "--width", "720", "--height", "405", "--settings-dir", dir, "--json");
+                    var before = Win32.Frame(a.Handle);
+                    var json = Json("preset", "apply", "検証", "--hwnd", a.Hex, "--settings-dir", dir, "--json");
+                    Equal(new Size(720, 405), Win32.Client(a.Handle).Size, "実測の中身");
+                    Equal(before.Location, Win32.Frame(a.Handle).Location, "位置は不変");
+                    Equal("検証", json["preset"]!["name"]!.GetValue<string>(), "適用したプリセット");
+                    var dry = Json("preset", "apply", "HD", "--hwnd", a.Hex, "--dry-run", "--settings-dir", dir, "--json");
+                    True(dry["after"] is null && Win32.Client(a.Handle).Size == new Size(720, 405), "--dry-run は不変");
+                })),
                 ("--instance のGUIは利用者のGUIと分離され、一覧から除外される", () => IsolatedGui(tag)),
             ]);
         }
@@ -186,7 +323,8 @@ internal static class CliTests
     private static void IsolatedGui(string tag)
     {
         var instance = "test-" + tag;
-        using var gui = Process.Start(new ProcessStartInfo(ProductPath("ChunapTool.exe"), ["--passive", "--instance", instance]))!;
+        var settings = Path.Combine(Path.GetTempPath(), "chunap-gui-" + tag);
+        using var gui = Process.Start(new ProcessStartInfo(ProductPath("ChunapTool.exe"), ["--passive", "--instance", instance, "--settings-dir", settings]))!;
         try
         {
             var response = WaitFor(() => Management("chunap-tool." + instance, "status"), "検証用GUIの応答");
@@ -195,7 +333,11 @@ internal static class CliTests
             Equal("accepted", Management("chunap-tool." + instance, "stop")!["result"]!.GetValue<string>(), "停止要求");
             True(gui.WaitForExit(5000), "停止");
         }
-        finally { if (!gui.HasExited) gui.Kill(); }
+        finally
+        {
+            if (!gui.HasExited) gui.Kill();
+            if (Directory.Exists(settings)) Directory.Delete(settings, true);
+        }
     }
 
     private static JsonNode? Management(string id, string command)
@@ -302,11 +444,10 @@ internal static class CliTests
         throw new FileNotFoundException("製品の実行ファイルが見つかりません。先にdev/scripts/build.ps1を実行してください。", file);
     }
 
-    private static Rectangle Frame(JsonNode state)
-    {
-        var frame = state["frame"]!;
-        return new(frame["x"]!.GetValue<int>(), frame["y"]!.GetValue<int>(), frame["width"]!.GetValue<int>(), frame["height"]!.GetValue<int>());
-    }
+    private static Rectangle Frame(JsonNode state) => Rect(state["frame"]!);
+
+    private static Rectangle Rect(JsonNode bounds) =>
+        new(bounds["x"]!.GetValue<int>(), bounds["y"]!.GetValue<int>(), bounds["width"]!.GetValue<int>(), bounds["height"]!.GetValue<int>());
 
     private static void Equal<T>(T expected, T actual, string message)
     {
@@ -336,6 +477,22 @@ internal static class CliTests
         }
 
         internal static bool IsZoomed(nint window) => IsZoomedNative(window);
+
+        internal static Rectangle Client(nint window)
+        {
+            if (!GetClientRect(window, out var rect)) throw new InvalidOperationException("クライアント領域を取得できません。");
+            var origin = new Point();
+            if (!ClientToScreen(window, ref origin)) throw new InvalidOperationException("クライアント座標を変換できません。");
+            return new Rectangle(origin.X, origin.Y, rect.Right, rect.Bottom);
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetClientRect(nint window, out Rect rect);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ClientToScreen(nint window, ref Point point);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct Rect { public int Left, Top, Right, Bottom; }
