@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using ChunapTool.Core;
 using ChunapTool.Native;
 
@@ -8,7 +9,7 @@ namespace ChunapTool.Tests;
 /// <summary>この検証が起動した専用プロセスだけを操作するWindows実機検証。</summary>
 internal static class NativeTests
 {
-    public static int Run()
+    public static int Run(WindowBounds? requested = null)
     {
         if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
         {
@@ -21,8 +22,9 @@ internal static class NativeTests
         Application.SetCompatibleTextRenderingDefault(false);
         var service = new NativeWindowService();
         Process? fixture = null;
+        FixtureGeometryResult? result = null;
         int successes = 0, failures = 0;
-        using var host = new BrandedForm
+        using var host = requested is not null ? null : new BrandedForm
         {
             Text = WindowTitle.Create("プレビュー実機検証"),
             StartPosition = FormStartPosition.Manual,
@@ -34,22 +36,72 @@ internal static class NativeTests
 
         try
         {
-            fixture = StartFixture();
+            fixture = StartFixture(requested is not null);
             uint fixtureId = (uint)fixture.Id;
             WindowEntry? entry = null;
             WaitUntil(() =>
             {
                 if (fixture.HasExited)
                     throw new InvalidOperationException("動作確認用プロセスが起動直後に終了しました。");
-                entry = service.Enumerate("動作確認用").SingleOrDefault(candidate => candidate.Identity.ProcessId == fixtureId);
+                entry = service.Enumerate("動作確認用").SingleOrDefault(candidate => candidate.Identity.ProcessId == fixtureId
+                    && candidate.Title == WindowTitle.Create("動作確認用"));
                 return entry is not null;
             }, "動作確認用ウィンドウの起動");
-            WindowIdentity target = entry!.Identity;
+            if (requested is { } rectangle)
+                result = VerifyFixtureGeometry(service, fixture, entry!, rectangle);
+            else
+                RunNativeCases(host!, fixture, entry!);
+        }
+        catch (Exception error)
+        {
+            failures++;
+            Console.Error.WriteLine($"実機検証の準備または進行に失敗しました。\n{error}");
+        }
+        finally
+        {
+            host?.Close();
+            if (fixture is not null)
+            {
+                try
+                {
+                    if (!fixture.HasExited)
+                    {
+                        if (requested is not null) fixture.StandardInput.Close();
+                        else { fixture.Refresh(); fixture.CloseMainWindow(); }
+                        WaitUntil(() => fixture.HasExited, "後始末時の専用プロセスの正常終了");
+                    }
+                    if (requested is not null)
+                        Require(fixture.ExitCode == 0, $"専用プロセスの終了コード: {fixture.ExitCode}");
+                }
+                catch (Exception error)
+                {
+                    failures++;
+                    Console.Error.WriteLine($"専用プロセスを正常終了できませんでした。PID={fixture.Id}\n{error}");
+                    if (requested is not null && !fixture.HasExited)
+                    {
+                        // この実行が起動し、保持している専用プロセスだけを後始末する。
+                        fixture.Kill();
+                        fixture.WaitForExit(5000);
+                    }
+                }
+                finally { fixture.Dispose(); }
+            }
+        }
+        if (requested is null)
+            Console.WriteLine($"実機検証: {successes}/{successes + failures} 成功");
+        else if (failures == 0)
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonSerializerOptions.Web));
+        return failures == 0 ? 0 : 1;
+
+        void RunNativeCases(BrandedForm previewHost, Process fixtureProcess, WindowEntry entry)
+        {
+            uint fixtureId = (uint)fixtureProcess.Id;
+            WindowIdentity target = entry.Identity;
             Require(target.ProcessId == fixtureId && target.ProcessId != (uint)Environment.ProcessId,
                 "この検証が起動した別プロセス以外を操作しようとしました。");
             WindowState original = ReadState(service, target);
             WindowBounds work = service.GetWorkArea(target);
-            host.Show();
+            previewHost.Show();
             PumpFor(120);
 
             void Case(string name, Action body)
@@ -94,12 +146,12 @@ internal static class NativeTests
             Case("DWMの見える矩形を基準に移動・サイズ変更", () =>
             {
                 RestoreOriginal();
-                var requested = WindowGeometry.Constrain(new WindowBounds(work.X + 60, work.Y + 60,
+                var desired = WindowGeometry.Constrain(new WindowBounds(work.X + 60, work.Y + 60,
                     original.Bounds.Width + 24, original.Bounds.Height + 20), work, false);
-                service.ApplyBounds(target, requested);
-                var actual = WaitForState(service, target, state => state.Bounds == requested,
+                service.ApplyBounds(target, desired);
+                var actual = WaitForState(service, target, state => state.Bounds == desired,
                     "指定した見える矩形への移動・サイズ変更");
-                Require(actual.Bounds == requested, $"見える矩形が一致しません。要求={requested}, 実測={actual.Bounds}");
+                Require(actual.Bounds == desired, $"見える矩形が一致しません。要求={desired}, 実測={actual.Bounds}");
             });
 
             Case("最大化してから解除すると直前の通常矩形へ戻る", () =>
@@ -170,7 +222,7 @@ internal static class NativeTests
                 var preview = new DwmPreview();
                 try
                 {
-                    preview.Attach(host.Handle, target.Handle);
+                    preview.Attach(previewHost.Handle, target.Handle);
                     Require(preview.IsAttached, "プレビューが登録されていません。");
                     preview.Update(new Rectangle(12, 12, 396, 286));
                     PumpFor(350);
@@ -180,13 +232,13 @@ internal static class NativeTests
                     preview.Clear();
                     preview.Clear();
                     Require(!preview.IsAttached, "解除後もプレビューが残っています。");
-                    preview.Attach(host.Handle, target.Handle);
-                    preview.Update(host.ClientRectangle);
+                    preview.Attach(previewHost.Handle, target.Handle);
+                    preview.Update(previewHost.ClientRectangle);
                     PumpFor(250);
                     preview.Dispose();
                     preview.Dispose();
                     Require(!preview.IsAttached, "Dispose後もプレビューが残っています。");
-                    Throws<ObjectDisposedException>(() => preview.Update(host.ClientRectangle));
+                    Throws<ObjectDisposedException>(() => preview.Update(previewHost.ClientRectangle));
                 }
                 finally { preview.Dispose(); }
             });
@@ -194,50 +246,118 @@ internal static class NativeTests
             Case("専用対象の終了後は状態なしとなり、プレビューを安全に解除", () =>
             {
                 using var preview = new DwmPreview();
-                preview.Attach(host.Handle, target.Handle);
-                preview.Update(host.ClientRectangle);
-                fixture.Refresh();
-                Require(fixture.CloseMainWindow(), "専用ウィンドウへ終了を要求できませんでした。");
-                WaitUntil(() => fixture.HasExited, "専用プロセスの正常終了");
+                preview.Attach(previewHost.Handle, target.Handle);
+                preview.Update(previewHost.ClientRectangle);
+                fixtureProcess.Refresh();
+                Require(fixtureProcess.CloseMainWindow(), "専用ウィンドウへ終了を要求できませんでした。");
+                WaitUntil(() => fixtureProcess.HasExited, "専用プロセスの正常終了");
                 Require(service.GetState(target) is null, "終了した対象の状態が残っています。");
                 Throws<Win32Exception>(() => service.ApplyBounds(target, original.Bounds));
-                Throws<Win32Exception>(() => preview.Update(host.ClientRectangle));
+                Throws<Win32Exception>(() => preview.Update(previewHost.ClientRectangle));
                 preview.Clear();
                 preview.Clear();
             });
         }
-        catch (Exception error)
-        {
-            failures++;
-            Console.Error.WriteLine($"実機検証の準備または進行に失敗しました。\n{error}");
-        }
-        finally
-        {
-            host.Close();
-            if (fixture is not null)
-            {
-                try
-                {
-                    if (!fixture.HasExited)
-                    {
-                        fixture.Refresh();
-                        fixture.CloseMainWindow();
-                        WaitUntil(() => fixture.HasExited, "後始末時の専用プロセスの正常終了");
-                    }
-                }
-                catch (Exception error)
-                {
-                    failures++;
-                    Console.Error.WriteLine($"専用プロセスを正常終了できませんでした。PID={fixture.Id}\n{error}");
-                }
-                finally { fixture.Dispose(); }
-            }
-        }
-        Console.WriteLine($"実機検証: {successes}/{successes + failures} 成功");
-        return failures == 0 ? 0 : 1;
     }
 
-    private static Process StartFixture()
+    private static FixtureGeometryResult VerifyFixtureGeometry(NativeWindowService native, Process fixture,
+        WindowEntry entry, WindowBounds requested)
+    {
+        using var context = new ApplicationContext();
+        FixtureGeometryResult? result = null;
+        Exception? failure = null;
+        EventHandler? run = null;
+        run = async (_, _) =>
+        {
+            Application.Idle -= run;
+            try
+            {
+                var service = new FixtureScope(native, fixture, entry);
+                using var form = new MainForm(service, passive: true);
+                form.autoApply.Checked = false;
+                form.RefreshTargets();
+                Require(form.targets.Items.Count == 1 && form.targets.Items[0] is WindowEntry candidate
+                    && candidate.Identity == entry.Identity, "専用ウィンドウ以外が候補に含まれています。");
+                form.targets.SelectedIndex = 0;
+                Require(form.selected?.Identity == entry.Identity && form.apply.Enabled, "専用ウィンドウを選択できません。");
+
+                WindowState Read() => service.GetState(entry.Identity)
+                    ?? throw new InvalidOperationException("専用ウィンドウが終了しました。");
+                var before = Read();
+                Require(!before.IsMaximized && !before.IsMinimized && before.Bounds != requested,
+                    "通常状態の初期値とは異なる矩形を指定してください。");
+                int[] values = [requested.X, requested.Y, requested.Width, requested.Height];
+                Require(values.Select((value, index) => value >= form.numbers[index].Minimum
+                    && value <= form.numbers[index].Maximum).All(valid => valid), "指定値が入力欄の範囲外です。");
+                Require(WindowGeometry.Constrain(requested, service.GetWorkArea(entry.Identity), false) == requested,
+                    "対象モニターの作業領域に収まる矩形を指定してください。");
+
+                foreach (var other in new[] { entry.Identity with { ProcessId = 0 }, entry.Identity with { Handle = 0 } })
+                {
+                    Require(service.GetState(other) is null, "対象外の状態を取得しました。");
+                    Throws<InvalidOperationException>(() => service.GetWorkArea(other));
+                    Throws<InvalidOperationException>(() => service.ApplyBounds(other, requested));
+                    Throws<InvalidOperationException>(() => service.SetMaximized(other, true));
+                    Throws<InvalidOperationException>(() => service.Restore(before with { Target = other }));
+                }
+
+                for (int i = 0; i < values.Length; i++) form.numbers[i].Value = values[i];
+                Require(Read() == before, "手動反映前にウィンドウが変化しました。");
+                await form.ApplyAsync();
+                var applied = Read();
+                Require(applied.Bounds == requested && form.undo.Enabled && form.history.Count == 1,
+                    $"適用結果が一致しません。指定={requested}、実測={applied.Bounds}、状態={form.status.Text}");
+                await form.UndoAsync();
+                var restored = Read();
+                Require(restored.Bounds == before.Bounds && restored.Placement.NormalBounds == before.Placement.NormalBounds
+                    && !restored.IsMaximized && !restored.IsMinimized && form.history.Count == 0
+                    && service.Applies == 1 && service.Restores == 1,
+                    $"Undo結果が一致しません。初期={before.Bounds}、実測={restored.Bounds}、状態={form.status.Text}");
+                result = new(fixture.Id, $"0x{entry.Identity.Handle:X}", entry.Title, requested, before.Bounds,
+                    applied.Bounds, restored.Bounds, service.Applies, service.Restores);
+            }
+            catch (Exception error) { failure = error; }
+            finally { context.ExitThread(); }
+        };
+        Application.Idle += run;
+        try { Application.Run(context); }
+        finally { Application.Idle -= run; }
+        return result ?? throw new InvalidOperationException("専用ウィンドウの操作検証に失敗しました。", failure);
+    }
+
+    private sealed record FixtureGeometryResult(int Pid, string Hwnd, string Title, WindowBounds Requested,
+        WindowBounds Before, WindowBounds Applied, WindowBounds Restored, int ApplyCount, int UndoCount);
+
+    // 候補だけでなくWin32に委譲する全経路を、今回のPID・HWNDの組に限定する。
+    private sealed class FixtureScope(NativeWindowService native, Process fixture, WindowEntry entry) : IWindowService
+    {
+        public int Applies { get; private set; }
+        public int Restores { get; private set; }
+        private bool Owns(WindowIdentity target) => target == entry.Identity && target.ProcessId == (uint)fixture.Id
+            && target.ProcessId != (uint)Environment.ProcessId && target.Handle != 0 && !fixture.HasExited;
+        private void EnsureOwned(WindowIdentity target) => Require(Owns(target), "専用ウィンドウ以外の操作を拒否しました。");
+        public IReadOnlyList<WindowEntry> Enumerate(string filter) => Owns(entry.Identity)
+            && WindowCandidates.Matches(entry, filter) ? [entry] : [];
+        public WindowState? GetState(WindowIdentity target) => Owns(target) ? native.GetState(target) : null;
+        public WindowBounds GetWorkArea(WindowIdentity target) { EnsureOwned(target); return native.GetWorkArea(target); }
+        public void ApplyBounds(WindowIdentity target, WindowBounds bounds)
+        {
+            EnsureOwned(target);
+            native.ApplyBounds(target, bounds);
+            Applies++;
+        }
+        public void SetMaximized(WindowIdentity target, bool maximized) =>
+            throw new InvalidOperationException("位置・サイズ検証では最大化を実行しません。");
+        public void Restore(WindowState state)
+        {
+            EnsureOwned(state.Target);
+            native.Restore(state);
+            Restores++;
+        }
+        public bool IsLeftButtonDown => false;
+    }
+
+    private static Process StartFixture(bool passive)
     {
         string assembly = typeof(NativeTests).Assembly.Location;
         string executable = Path.ChangeExtension(assembly, ".exe");
@@ -246,11 +366,13 @@ internal static class NativeTests
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = passive,
             WorkingDirectory = Path.GetDirectoryName(assembly)!
         };
         if (!useAppHost)
             start.ArgumentList.Add(assembly);
         start.ArgumentList.Add("--fixture");
+        if (passive) start.ArgumentList.Add("--owned-passive");
         return Process.Start(start) ?? throw new InvalidOperationException("専用プロセスを起動できませんでした。");
     }
 

@@ -5,8 +5,11 @@ internal sealed class FixtureForm : BrandedForm
 {
     private readonly System.Windows.Forms.Timer _clock = new() { Interval = 250 };
 
-    public FixtureForm()
+    private readonly bool passive;
+
+    public FixtureForm(bool passive = false)
     {
+        this.passive = passive;
         Text = WindowTitle.Create("動作確認用");
         StartPosition = FormStartPosition.Manual;
         MinimumSize = new Size(250, 180);
@@ -17,8 +20,21 @@ internal sealed class FixtureForm : BrandedForm
         ForeColor = Color.White;
         Font = new Font("Yu Gothic UI", 12);
         DoubleBuffered = true;
+        if (passive) { Opacity = 0; ShowInTaskbar = false; }
         _clock.Tick += (_, _) => Invalidate();
         _clock.Start();
+    }
+
+    protected override bool ShowWithoutActivation => passive;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            if (passive) parameters.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE：復元操作でも前面にしない。
+            return parameters;
+        }
     }
 
     protected override void OnPaint(PaintEventArgs e)

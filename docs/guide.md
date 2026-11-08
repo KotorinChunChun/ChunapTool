@@ -70,6 +70,23 @@ pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -Native
 ./tests/ChunapTool.Tests/bin/Debug/net10.0-windows10.0.19041.0/ChunapTool.Tests.exe --fixture
 ```
 
+### 専用ウィンドウで適用と復元を検証する
+
+`--native --fixture X Y W H`は、その実行で新たに起動した専用ウィンドウだけを対象にします。外部PID・HWND・ウィンドウ名は指定できません。専用ウィンドウを透過・非アクティブで起動し、通常画面の対象選択、手動適用と「戻す」を実行します。通常起動中のChunapTool、他の確認用ウィンドウ、保存設定や履歴を使用しません。
+
+Windowsの対話デスクトップ上のpwshで、子リポジトリのルートから実行します。
+
+```powershell
+$run = 'dev/history/v0.1.2/logs/fixture-cli'
+dotnet build tests/ChunapTool.Tests/ChunapTool.Tests.csproj -c Debug --artifacts-path "$run/build" --nologo
+if ($LASTEXITCODE) { throw 'ビルドに失敗しました。' }
+$test = "$run/build/bin/ChunapTool.Tests/debug/ChunapTool.Tests.exe"
+& $test --native --fixture 100 120 700 450 | Tee-Object -FilePath "$run/result.json"
+if ($LASTEXITCODE) { throw '適用・復元の検証に失敗しました。' }
+```
+
+指定値は見える枠の画面ピクセル座標です。作業領域に収まる、初期値とは異なる矩形を指定します。環境に応じて数値を調整してください。成功時は終了コード0で、`requested`・`applied`、`before`・`restored`がそれぞれ一致するJSONを出力します。`pid`と`hwnd`は検証対象を照合するための出力で、入力には使えません。不正な引数は終了コード2、矩形不一致や実行失敗は1です。終了時に専用プロセスを閉じます。この試験にマウス操作・見た目の確認は含みません。
+
 WGCの実取得検証は、画面内の最背面・非アクティブに置いた専用フォームだけを使用します。保存先を明示して実行します（Windowsの撮影APIへアクセスできる通常のpwshで実行）。
 
 ```powershell

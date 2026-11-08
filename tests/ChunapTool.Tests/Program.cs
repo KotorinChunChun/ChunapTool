@@ -1,3 +1,6 @@
+using System.Globalization;
+using ChunapTool.Core;
+
 namespace ChunapTool.Tests;
 
 internal static class Program
@@ -14,6 +17,10 @@ internal static class Program
         }
         if (args.Length == 2 && args[0] == "--capture-smoke") return WgcSmokeTests.Run(args[1]);
         if (args.SequenceEqual(new[] { "--native" })) return NativeTests.Run();
+        if (args is ["--native", "--fixture", var x, var y, var w, var h]
+            && TryInteger(x, out int left) && TryInteger(y, out int top)
+            && TryInteger(w, out int width) && TryInteger(h, out int height) && width > 0 && height > 0)
+            return NativeTests.Run(new WindowBounds(left, top, width, height));
         if (args.SequenceEqual(new[] { "--ui" }))
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -39,22 +46,35 @@ internal static class Program
             Application.Run(context);
             return result;
         }
-        if (args.Contains("--fixture", StringComparer.Ordinal))
+        if (args is ["--fixture"] or ["--fixture", "--owned-passive"])
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new FixtureForm());
+            bool ownedPassive = args.Length == 2;
+            using var fixture = new FixtureForm(ownedPassive);
+            if (ownedPassive) fixture.Shown += async (_, _) =>
+            {
+                // 親が閉じた専用の標準入力だけを終了通知に使う。
+                try { await Task.Run(() => Console.In.ReadLine()); }
+                catch (IOException) { }
+                fixture.Close();
+            };
+            Application.Run(fixture);
             return 0;
         }
 
         if (args.Length > 0)
         {
             Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--fixtureで動作確認用画面を起動します。");
+            Console.Error.WriteLine("専用ウィンドウの指定矩形を検証: --native --fixture X Y W H（整数、幅・高さは正数）");
             return 2;
         }
 
         ManagementTests.Run(Path.GetTempPath());
         return CoreTests.Run();
     }
+
+    private static bool TryInteger(string value, out int number) =>
+        int.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out number);
 }
