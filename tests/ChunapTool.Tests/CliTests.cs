@@ -86,8 +86,10 @@ internal static class CliTests
             Equal("配信HD", moved[0]!["name"]!.GetValue<string>(), "先頭へ移動");
             var removed = Json("preset", "remove", "fhd", "--settings-dir", dir, "--json")["presets"]!.AsArray();
             True(removed.All(p => p!["name"]!.GetValue<string>() != "FHD"), "大文字小文字を区別せず削除");
+            // 文章の出力はコンソールのコードページで書く。英語環境（CIなど）では日本語を表せないため、表せる場合だけ確かめる。
             var text = Cli("preset", "list", "--settings-dir", dir);
-            True(text.Output.Contains("配信HD", StringComparison.Ordinal), "文章の一覧に日本語の名前");
+            Equal(0, text.ExitCode, "文章の一覧");
+            if (OemCanEncode("配信HD")) True(text.Output.Contains("配信HD", StringComparison.Ordinal), "文章の一覧に日本語の名前");
         })),
         ("preset の重複・存在しない名前・語数の誤りは終了コード2", () => WithSettings(dir =>
         {
@@ -193,12 +195,15 @@ internal static class CliTests
                 }),
                 ("作業領域の外は補正し、--allow-outside では要求どおり", () =>
                 {
+                    // 右端から100pxだけはみ出させる。大半を元のモニターに残し、右隣にモニターがあっても所属が変わらないようにする。
                     var area = Screen.FromHandle(a.Handle).WorkingArea;
-                    var json = Json("set", "--hwnd", a.Hex, "--x", (area.Right - 100).ToString(CultureInfo.InvariantCulture), "--json");
+                    var outside = (area.Right - Win32.Frame(a.Handle).Width + 100).ToString(CultureInfo.InvariantCulture);
+                    var json = Json("set", "--hwnd", a.Hex, "--x", outside, "--json");
                     True(json["warnings"]!.AsArray().Count > 0, "補正の注意");
                     True(area.Contains(Win32.Frame(a.Handle)), "作業領域内");
-                    Json("set", "--hwnd", a.Hex, "--x", (area.Right - 100).ToString(CultureInfo.InvariantCulture), "--allow-outside", "--json");
-                    Equal(area.Right - 100, Win32.Frame(a.Handle).X, "画面外を許可");
+                    Json("set", "--hwnd", a.Hex, "--x", outside, "--allow-outside", "--json");
+                    Equal(int.Parse(outside, CultureInfo.InvariantCulture), Win32.Frame(a.Handle).X, "画面外を許可");
+                    Equal(area, Screen.FromHandle(a.Handle).WorkingArea, "元のモニターに属したまま");
                 }),
                 ("constrain で作業領域へ収める", () =>
                 {
@@ -414,6 +419,14 @@ internal static class CliTests
         var run = new CliRun(process.ExitCode, output.Result, error.Result);
         Console.WriteLine($"  実行: chunap {string.Join(" ", args.Select(Quote))} → 終了コード {run.ExitCode}");
         return run;
+    }
+
+    private static bool OemCanEncode(string text)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var strict = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        try { strict.GetBytes(text); return true; }
+        catch (EncoderFallbackException) { return false; }
     }
 
     private static JsonNode Json(params string[] args)
