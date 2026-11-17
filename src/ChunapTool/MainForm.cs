@@ -485,15 +485,8 @@ public sealed class MainForm : BrandedForm
 
     private void WriteState(WindowState state)
     {
-        reading = true;
-        try
-        {
-            WriteBounds(BoundsBases.Read(state, CurrentBasis));
-            maximize.Checked = state.IsMaximized;
-            maximize.Text = state.IsMaximized ? "通常化" : "最大化";
-            UpdateMaximizeTooltip(state.IsMaximized);
-        }
-        finally { reading = false; }
+        WriteBounds(BoundsBases.Read(state, CurrentBasis));
+        WriteMaximized(state);
     }
 
     private WindowBounds InputBounds() =>
@@ -511,16 +504,20 @@ public sealed class MainForm : BrandedForm
         finally { reading = restore; }
     }
 
-    private void WriteMaximized(WindowState state)
+    private void WriteMaximized(WindowState state) => WriteMaximized(state.IsMaximized);
+
+    // ボタンの状態・表示名・ツールチップをまとめて切り替える。読み取り中として扱い、最大化の要求を起こさない。
+    private void WriteMaximized(bool isMaximized)
     {
+        var restore = reading;
         reading = true;
         try
         {
-            maximize.Checked = state.IsMaximized;
-            maximize.Text = state.IsMaximized ? "通常化" : "最大化";
-            UpdateMaximizeTooltip(state.IsMaximized);
+            maximize.Checked = isMaximized;
+            maximize.Text = isMaximized ? "通常化" : "最大化";
+            UpdateMaximizeTooltip(isMaximized);
         }
-        finally { reading = false; }
+        finally { reading = restore; }
     }
 
     internal async Task ApplyAsync()
@@ -668,8 +665,9 @@ public sealed class MainForm : BrandedForm
         history.Select(null);
         preview.Clear();
         reading = true;
-        try { targets.SelectedIndex = -1; maximize.Checked = false; maximize.Text = "最大化"; }
+        try { targets.SelectedIndex = -1; }
         finally { reading = false; }
+        WriteMaximized(false);
         UpdateControls(); UpdatePreview(); SetStatus(message);
     }
 

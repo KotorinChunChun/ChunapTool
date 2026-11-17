@@ -114,7 +114,7 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
                             : throw CliException.Usage($"--aspect は「16:9」の形式か正の数で指定してください: {aspectText}");
                     if ((keepAspect || aspect is not null) && request.Width is not null && request.Height is not null)
                         throw CliException.Usage("比率を固定する場合は、--width と --height のどちらか一方だけを指定してください。");
-                    var (allowOutside, dryRun, timeout) = (arguments.Flag("allow-outside"), arguments.Flag("dry-run"), arguments.Timeout);
+                    var options = arguments.Options(allowOutside: true);
                     arguments.EnsureAllUsed();
                     var entry = Resolve(criteria);
                     if (keepAspect)
@@ -123,7 +123,7 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
                         var current = BoundsBases.Read(operations.GetState(entry.Identity), request.Basis);
                         aspect = AspectRatio.Of(current.Width, current.Height);
                     }
-                    var result = await operations.SetBoundsAsync(entry.Identity, request with { Aspect = aspect }, allowOutside, dryRun, timeout);
+                    var result = await operations.SetBoundsAsync(entry.Identity, request with { Aspect = aspect }, options);
                     return Changed(entry, result, "位置・サイズ");
                 }
             case "preset":
@@ -134,27 +134,27 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
             case "unmaximize":
                 {
                     var criteria = arguments.Criteria();
-                    var (dryRun, timeout) = (arguments.Flag("dry-run"), arguments.Timeout);
+                    var options = arguments.Options();
                     arguments.EnsureAllUsed();
                     var entry = Resolve(criteria);
-                    var result = await operations.SetMaximizedAsync(entry.Identity, command == "maximize", dryRun, timeout);
+                    var result = await operations.SetMaximizedAsync(entry.Identity, command == "maximize", options);
                     return Changed(entry, result, command == "maximize" ? "最大化" : "通常表示");
                 }
             case "constrain":
                 {
                     var criteria = arguments.Criteria();
-                    var (dryRun, timeout) = (arguments.Flag("dry-run"), arguments.Timeout);
+                    var options = arguments.Options();
                     arguments.EnsureAllUsed();
                     var entry = Resolve(criteria);
                     // 現在の位置・サイズを、画面外可OFFの規則で作業領域へ収める。
-                    var result = await operations.SetBoundsAsync(entry.Identity, new BoundsRequest(null, null, null, null), false, dryRun, timeout);
+                    var result = await operations.SetBoundsAsync(entry.Identity, new BoundsRequest(null, null, null, null), options);
                     return Changed(entry, result, "作業領域への補正");
                 }
             case "restore":
                 {
                     var criteria = arguments.Criteria();
                     var path = arguments.Text("from") ?? throw CliException.Usage("restore には --from <JSONファイル> を指定してください。");
-                    var (dryRun, timeout) = (arguments.Flag("dry-run"), arguments.Timeout);
+                    var options = arguments.Options();
                     arguments.EnsureAllUsed();
                     string text;
                     try { text = File.ReadAllText(path); }
@@ -164,7 +164,7 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
                     }
                     var entry = Resolve(criteria);
                     var saved = CliJson.ReadState(text, entry.Identity);
-                    return Changed(entry, await operations.RestoreAsync(entry.Identity, saved, dryRun, timeout), "保存した状態の復元");
+                    return Changed(entry, await operations.RestoreAsync(entry.Identity, saved, options), "保存した状態の復元");
                 }
             default:
                 throw CliException.Usage($"不明なコマンドです: {command}（chunap help で一覧を表示）");
@@ -220,13 +220,13 @@ internal sealed class CliApplication(IWindowService windows, IWindowTargetPicker
                 {
                     Words(arguments, 3, "chunap preset apply <名前> <対象の指定>");
                     var criteria = arguments.Criteria();
-                    var (allowOutside, dryRun, timeout) = (arguments.Flag("allow-outside"), arguments.Flag("dry-run"), arguments.Timeout);
+                    var options = arguments.Options(allowOutside: true);
                     arguments.EnsureAllUsed();
                     var name = arguments.Word(2)!;
                     var preset = Presets.Find(settings.Load().Presets, name)
                         ?? throw CliException.Usage($"プリセットがありません: {name}（chunap preset list で一覧を表示）");
                     var entry = Resolve(criteria);
-                    var result = await operations.ApplyPresetAsync(entry.Identity, preset, allowOutside, dryRun, timeout);
+                    var result = await operations.ApplyPresetAsync(entry.Identity, preset, options);
                     var changed = Changed(entry, result, $"プリセット「{preset.Name}」の適用");
                     changed.Json["preset"] = CliJson.Preset(preset);
                     return changed;

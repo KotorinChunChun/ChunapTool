@@ -25,25 +25,24 @@ public static class BoundsBases
         basis == BoundsBasis.Client && state.ClientBounds is { } client ? client : state.Bounds;
 
     /// <summary>基準の矩形を見える枠へ換算する。見える枠とクライアント領域の4辺の差を、現在の状態から求める。</summary>
-    public static WindowBounds ToFrame(WindowBounds bounds, WindowState state, BoundsBasis basis)
-    {
-        if (basis == BoundsBasis.Frame || state.ClientBounds is not { } client) return bounds;
-        var frame = state.Bounds;
-        int left = client.X - frame.X, top = client.Y - frame.Y;
-        int right = frame.X + frame.Width - (client.X + client.Width);
-        int bottom = frame.Y + frame.Height - (client.Y + client.Height);
-        return new WindowBounds(bounds.X - left, bounds.Y - top, bounds.Width + left + right, bounds.Height + top + bottom);
-    }
+    public static WindowBounds ToFrame(WindowBounds bounds, WindowState state, BoundsBasis basis) =>
+        Insets(state, basis) is (var left, var top, var right, var bottom)
+            ? new WindowBounds(bounds.X - left, bounds.Y - top, bounds.Width + left + right, bounds.Height + top + bottom)
+            : bounds;
 
     /// <summary>見える枠の矩形を、現在の状態の4辺の差で基準の矩形へ戻す。</summary>
-    public static WindowBounds FromFrame(WindowBounds frame, WindowState state, BoundsBasis basis)
+    public static WindowBounds FromFrame(WindowBounds frame, WindowState state, BoundsBasis basis) =>
+        Insets(state, basis) is (var left, var top, var right, var bottom)
+            ? new WindowBounds(frame.X + left, frame.Y + top, frame.Width - left - right, frame.Height - top - bottom)
+            : frame;
+
+    // 見える枠からクライアント領域までの左・上・右・下の幅。枠の基準やクライアント領域がない状態ではnull（換算しない）。
+    private static (int Left, int Top, int Right, int Bottom)? Insets(WindowState state, BoundsBasis basis)
     {
-        if (basis == BoundsBasis.Frame || state.ClientBounds is not { } client) return frame;
-        var current = state.Bounds;
-        int left = client.X - current.X, top = client.Y - current.Y;
-        int right = current.X + current.Width - (client.X + client.Width);
-        int bottom = current.Y + current.Height - (client.Y + client.Height);
-        return new WindowBounds(frame.X + left, frame.Y + top, frame.Width - left - right, frame.Height - top - bottom);
+        if (basis == BoundsBasis.Frame || state.ClientBounds is not { } client) return null;
+        var frame = state.Bounds;
+        return (client.X - frame.X, client.Y - frame.Y,
+            frame.X + frame.Width - (client.X + client.Width), frame.Y + frame.Height - (client.Y + client.Height));
     }
 }
 

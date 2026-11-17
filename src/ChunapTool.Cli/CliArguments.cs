@@ -1,5 +1,6 @@
 using System.Globalization;
 using ChunapTool.Core;
+using ChunapTool.Operations;
 
 namespace ChunapTool.Cli;
 
@@ -80,6 +81,10 @@ internal sealed class CliArguments
         if (text is null) return fallback;
         return BoundsBases.TryParse(text, out var basis) ? basis : throw CliException.Usage($"--basis には frame か client を指定してください: {text}");
     }
+
+    /// <summary>変更系のコマンドの共通オプション。画面外可を受け付けないコマンドでは--allow-outsideを読まず、未使用のオプションとして拒否する。</summary>
+    internal OperationOptions Options(bool allowOutside = false) =>
+        new(allowOutside && Flag("allow-outside"), Flag("dry-run"), Timeout);
 
     internal TimeSpan Timeout => TimeSpan.FromMilliseconds(Integer("timeout", 100, 60000) ?? 3000);
 

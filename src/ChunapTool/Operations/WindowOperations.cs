@@ -79,47 +79,49 @@ internal sealed class WindowOperations(IWindowService windows)
         return new(desired, BoundsBases.FromFrame(desired, before, basis), warnings);
     }
 
-    internal async Task<OperationResult> SetBoundsAsync(WindowIdentity target, BoundsRequest request,
-        bool allowOutside, bool dryRun, TimeSpan timeout)
+    internal async Task<OperationResult> SetBoundsAsync(WindowIdentity target, BoundsRequest request, OperationOptions options)
     {
         var before = GetState(target);
         if (before.IsMaximized || before.IsMinimized)
             throw new InvalidOperationException("最大化・最小化中は位置やサイズを変更できません。先に通常表示へ戻してください。");
-        var plan = Plan(before, request, windows.GetWorkArea(target), allowOutside);
+        var plan = Plan(before, request, windows.GetWorkArea(target), options.AllowOutside);
         var (desired, warnings) = (plan.Frame, plan.Warnings.ToList());
         OperationResult Result(WindowState? after) => new(before, after, desired, warnings) { Basis = request.Basis, RequestedInBasis = plan.InBasis };
-        if (dryRun || desired == before.Bounds) return Result(dryRun ? null : before);
+        if (options.DryRun || desired == before.Bounds) return Result(options.DryRun ? null : before);
         windows.ApplyBounds(target, desired);
-        var after = await WaitForAsync(windows, target, state => BoundsCompleted(state, before, desired), timeout);
+        var after = await WaitForAsync(windows, target, state => BoundsCompleted(state, before, desired), options.Timeout);
         if (after.Bounds != desired) warnings.Add("対象アプリの制限により、要求と異なる位置・サイズになりました。");
         return Result(after);
     }
 
     /// <summary>プリセットは位置を変えず、プリセットの基準で幅・高さだけを変える。</summary>
-    internal Task<OperationResult> ApplyPresetAsync(WindowIdentity target, Preset preset, bool allowOutside, bool dryRun, TimeSpan timeout) =>
-        SetBoundsAsync(target, new BoundsRequest(null, null, preset.Width, preset.Height) { Basis = preset.Basis }, allowOutside, dryRun, timeout);
+    internal Task<OperationResult> ApplyPresetAsync(WindowIdentity target, Preset preset, OperationOptions options) =>
+        SetBoundsAsync(target, new BoundsRequest(null, null, preset.Width, preset.Height) { Basis = preset.Basis }, options);
 
-    internal async Task<OperationResult> SetMaximizedAsync(WindowIdentity target, bool maximized, bool dryRun, TimeSpan timeout)
+    internal async Task<OperationResult> SetMaximizedAsync(WindowIdentity target, bool maximized, OperationOptions options)
     {
         var before = GetState(target);
         if (maximized && !before.CanMaximize) throw new InvalidOperationException("このウィンドウは最大化できません。");
-        if (dryRun || (before.IsMaximized == maximized && !before.IsMinimized)) return new(before, dryRun ? null : before, null, []);
+        if (options.DryRun || (before.IsMaximized == maximized && !before.IsMinimized)) return new(before, options.DryRun ? null : before, null, []);
         windows.SetMaximized(target, maximized);
-        var after = await WaitForAsync(windows, target, state => MaximizeCompleted(state, maximized), timeout);
+        var after = await WaitForAsync(windows, target, state => MaximizeCompleted(state, maximized), options.Timeout);
         return new(before, after, null, []);
     }
 
-    internal async Task<OperationResult> RestoreAsync(WindowIdentity target, WindowState saved, bool dryRun, TimeSpan timeout)
+    internal async Task<OperationResult> RestoreAsync(WindowIdentity target, WindowState saved, OperationOptions options)
     {
         var before = GetState(target);
         // 保存した状態は別の対象から取ったものでもよい。復元先は呼出し側が指定した対象に限る。
         var restore = saved with { Target = target };
-        if (dryRun) return new(before, null, restore.Bounds, []);
+        if (options.DryRun) return new(before, null, restore.Bounds, []);
         windows.Restore(restore);
-        var after = await WaitForAsync(windows, target, state => RestoreCompleted(state, restore), timeout);
+        var after = await WaitForAsync(windows, target, state => RestoreCompleted(state, restore), options.Timeout);
         return new(before, after, restore.Bounds, []);
     }
 }
+
+/// <summary>操作の共通オプション（設計書2.2節）。AllowOutsideは位置・サイズの変更だけが使う。DryRunでは計算結果だけを返し、対象へ要求を送らない。</summary>
+internal sealed record OperationOptions(bool AllowOutside, bool DryRun, TimeSpan Timeout);
 
 internal sealed record BoundsRequest(int? X, int? Y, int? Width, int? Height)
 {

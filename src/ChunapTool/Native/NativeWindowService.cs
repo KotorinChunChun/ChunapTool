@@ -119,9 +119,7 @@ public sealed class NativeWindowService : IWindowService
         if (width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(bounds), "補正後のウィンドウサイズが不正です。");
         EnsureTarget(target);
-        // 対象アプリの処理をUIスレッドで待たず、前面化やZ順の変更もしない。
-        const uint flags = 0x4000 | 0x0004 | 0x0010;
-        if (!NativeMethods.SetWindowPos(target.Handle, 0, x, y, width, height, flags))
+        if (!NativeMethods.SetWindowPos(target.Handle, 0, x, y, width, height, NativeMethods.AsyncMoveWithoutActivation))
             throw LastError("位置・サイズ変更を要求できませんでした。");
     }
 
@@ -157,8 +155,7 @@ public sealed class NativeWindowService : IWindowService
         // 非同期要求は対象スレッドで順に処理されるため、配置の復元後に位置が確定する。
         if (state is { IsMaximized: false, IsMinimized: false, OuterBounds: { } outer })
         {
-            const uint flags = 0x4000 | 0x0004 | 0x0010;
-            if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, flags))
+            if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, NativeMethods.AsyncMoveWithoutActivation))
                 throw LastError("保存したウィンドウ位置を復元できませんでした。");
         }
     }

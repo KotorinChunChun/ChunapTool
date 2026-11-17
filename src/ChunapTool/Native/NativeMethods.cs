@@ -11,6 +11,8 @@ internal static class NativeMethods
     internal const int InvalidWindowHandle = 1400;
     internal const int Timeout = 1460;
     internal const uint AsyncWindowPlacement = 0x0004;
+    // SWP_ASYNCWINDOWPOS | SWP_NOZORDER | SWP_NOACTIVATE。対象アプリの処理をUIスレッドで待たず、前面化やZ順の変更もしない。
+    internal const uint AsyncMoveWithoutActivation = 0x4000 | 0x0004 | 0x0010;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect

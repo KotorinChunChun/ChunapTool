@@ -21,47 +21,42 @@ public sealed record GuiSettings
     public bool KeepAspect { get; init; }
     public bool PreviewExpanded { get; init; }
 
-    // config get/setで使う名前（settings.jsonのguiの項目名）。
-    public static readonly IReadOnlyList<string> Keys =
-        ["autoRead", "autoApply", "allowOutside", "toolTopMost", "basis", "keepAspect", "previewExpanded"];
+    /// <summary>
+    /// 各項目の名前（config get/setとsettings.jsonのguiで共通）と読み書き。項目を増やすときはここだけに加える。
+    /// IsFlagの項目は真偽値（JSONではtrue／false、CLIではon／offも可）、それ以外は文字列。
+    /// </summary>
+    internal sealed record Item(string Key, bool IsFlag, Func<GuiSettings, string> Read, Func<GuiSettings, string, GuiSettings> Write);
 
-    public string Get(string key) => key switch
-    {
-        "autoRead" => Bool(AutoRead),
-        "autoApply" => Bool(AutoApply),
-        "allowOutside" => Bool(AllowOutside),
-        "toolTopMost" => Bool(ToolTopMost),
-        "basis" => BoundsBases.Name(Basis),
-        "keepAspect" => Bool(KeepAspect),
-        "previewExpanded" => Bool(PreviewExpanded),
-        _ => throw new ArgumentException($"不明な設定です: {key}（{string.Join("、", Keys)}）"),
-    };
+    internal static readonly IReadOnlyList<Item> Items =
+    [
+        Flag("autoRead", settings => settings.AutoRead, (settings, value) => settings with { AutoRead = value }),
+        Flag("autoApply", settings => settings.AutoApply, (settings, value) => settings with { AutoApply = value }),
+        Flag("allowOutside", settings => settings.AllowOutside, (settings, value) => settings with { AllowOutside = value }),
+        Flag("toolTopMost", settings => settings.ToolTopMost, (settings, value) => settings with { ToolTopMost = value }),
+        new("basis", false, settings => BoundsBases.Name(settings.Basis), (settings, value) =>
+            BoundsBases.TryParse(value, out var basis) ? settings with { Basis = basis }
+                : throw new ArgumentException($"basis には frame か client を指定してください: {value}")),
+        Flag("keepAspect", settings => settings.KeepAspect, (settings, value) => settings with { KeepAspect = value }),
+        Flag("previewExpanded", settings => settings.PreviewExpanded, (settings, value) => settings with { PreviewExpanded = value }),
+    ];
 
-    public GuiSettings With(string key, string value)
-    {
-        if (key == "basis")
-            return BoundsBases.TryParse(value, out var basis) ? this with { Basis = basis }
-                : throw new ArgumentException($"basis には frame か client を指定してください: {value}");
-        bool flag = value switch
+    // Itemsより後に宣言する（静的初期化は宣言順）。
+    public static readonly IReadOnlyList<string> Keys = Items.Select(item => item.Key).ToArray();
+
+    public string Get(string key) => Find(key).Read(this);
+
+    public GuiSettings With(string key, string value) => Find(key).Write(this, value);
+
+    private static Item Find(string key) => Items.FirstOrDefault(item => item.Key == key)
+        ?? throw new ArgumentException($"不明な設定です: {key}（{string.Join("、", Keys)}）");
+
+    private static Item Flag(string key, Func<GuiSettings, bool> read, Func<GuiSettings, bool, GuiSettings> write) =>
+        new(key, true, settings => read(settings) ? "true" : "false", (settings, value) => write(settings, value switch
         {
             "true" or "on" => true,
             "false" or "off" => false,
-            _ => Keys.Contains(key) ? throw new ArgumentException($"{key} には true／false（on／off）を指定してください: {value}")
-                : throw new ArgumentException($"不明な設定です: {key}（{string.Join("、", Keys)}）"),
-        };
-        return key switch
-        {
-            "autoRead" => this with { AutoRead = flag },
-            "autoApply" => this with { AutoApply = flag },
-            "allowOutside" => this with { AllowOutside = flag },
-            "toolTopMost" => this with { ToolTopMost = flag },
-            "keepAspect" => this with { KeepAspect = flag },
-            "previewExpanded" => this with { PreviewExpanded = flag },
-            _ => throw new ArgumentException($"不明な設定です: {key}（{string.Join("、", Keys)}）"),
-        };
-    }
-
-    private static string Bool(bool value) => value ? "true" : "false";
+            _ => throw new ArgumentException($"{key} には true／false（on／off）を指定してください: {value}"),
+        }));
 }
 
 /// <summary>プリセット一覧の編集。名前は大文字小文字を区別せず一意とし、不正な指定はArgumentExceptionで拒否する。</summary>
@@ -165,13 +160,11 @@ public sealed class SettingsDocument
         root["schemaVersion"] = SchemaVersion;
         // gui内の未対応の項目も残すため、既存のオブジェクトへ上書きする。
         var gui = root["gui"] as JsonObject ?? new JsonObject();
-        gui["autoRead"] = Gui.AutoRead;
-        gui["autoApply"] = Gui.AutoApply;
-        gui["allowOutside"] = Gui.AllowOutside;
-        gui["toolTopMost"] = Gui.ToolTopMost;
-        gui["basis"] = BoundsBases.Name(Gui.Basis);
-        gui["keepAspect"] = Gui.KeepAspect;
-        gui["previewExpanded"] = Gui.PreviewExpanded;
+        foreach (var item in GuiSettings.Items)
+        {
+            var value = item.Read(Gui);
+            gui[item.Key] = item.IsFlag ? JsonValue.Create(value == "true") : JsonValue.Create(value);
+        }
         root["gui"] = gui;
         root["presets"] = new JsonArray(Presets.Select(preset => (JsonNode)new JsonObject
         {
@@ -184,21 +177,16 @@ public sealed class SettingsDocument
     {
         if (node is null) return new GuiSettings();
         if (node is not JsonObject gui) throw new SettingsException("guiがオブジェクトではありません。");
-        var defaults = new GuiSettings();
-        bool Flag(string key, bool fallback) => gui[key] is { } value ? Read<bool>(value, "gui." + key) : fallback;
-        var basis = defaults.Basis;
-        if (gui["basis"] is { } basisNode && !BoundsBases.TryParse(Read<string>(basisNode, "gui.basis"), out basis))
-            throw new SettingsException("gui.basisは frame か client です。");
-        return new GuiSettings
+        // ない項目は既定値。真偽値の項目はJSONの真偽値だけを受け付ける（"true"などの文字列は不正とする）。
+        var settings = new GuiSettings();
+        foreach (var item in GuiSettings.Items)
         {
-            AutoRead = Flag("autoRead", defaults.AutoRead),
-            AutoApply = Flag("autoApply", defaults.AutoApply),
-            AllowOutside = Flag("allowOutside", defaults.AllowOutside),
-            ToolTopMost = Flag("toolTopMost", defaults.ToolTopMost),
-            Basis = basis,
-            KeepAspect = Flag("keepAspect", defaults.KeepAspect),
-            PreviewExpanded = Flag("previewExpanded", defaults.PreviewExpanded),
-        };
+            if (gui[item.Key] is not { } value) continue;
+            var text = item.IsFlag ? (Read<bool>(value, "gui." + item.Key) ? "true" : "false") : Read<string>(value, "gui." + item.Key);
+            try { settings = item.Write(settings, text); }
+            catch (ArgumentException ex) { throw new SettingsException($"gui.{item.Key}: {ex.Message}"); }
+        }
+        return settings;
     }
 
     private static IReadOnlyList<Preset> ReadPresets(JsonNode node)
