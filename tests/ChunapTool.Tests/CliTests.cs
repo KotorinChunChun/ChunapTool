@@ -344,10 +344,7 @@ internal static class CliTests
                     // Windowsは別のプロセスによる前面化を制限するため、前面にできなかった場合は省略として報告する。
                     if (Win32.Foreground() != b.Handle) Win32.TrySetForeground(b.Handle);
                     if (Win32.Foreground() != b.Handle)
-                    {
-                        Console.WriteLine("  省略: 確認用ウィンドウを前面にできません（他の画面の操作中など）。");
-                        return;
-                    }
+                        throw new SkipException("確認用ウィンドウを前面にできません（検証のプロセスが前面にない、他の画面の操作中など）。");
                     Equal(b.Hex, Json("get", "--foreground", "--json")["target"]!["hwnd"]!.GetValue<string>(), "前面ウィンドウ");
                     Equal(3, Cli("get", "--foreground", "--title", $"CLI-none-{tag}", "--json").ExitCode, "条件と一致しない前面ウィンドウ");
                 }),
@@ -469,15 +466,20 @@ internal static class CliTests
     private static int RunCases(string name, (string Name, Action Execute)[] cases, Action? afterEach = null)
     {
         Console.WriteLine($"{name}: chunap = {ProductPath("chunap.exe")}");
-        int failures = 0;
+        int failures = 0, skipped = 0;
         foreach (var test in cases)
         {
             try { test.Execute(); afterEach?.Invoke(); Console.WriteLine($"成功: {test.Name}"); }
+            catch (SkipException ex) { skipped++; Console.WriteLine($"省略: {test.Name}（{ex.Message}）"); }
             catch (Exception ex) { failures++; Console.Error.WriteLine($"失敗: {test.Name}\n{ex}"); }
         }
-        Console.WriteLine($"{name}: {cases.Length - failures}/{cases.Length} 成功");
+        // 省略は失敗に数えないが、成功にも数えない。
+        Console.WriteLine($"{name}: {cases.Length - failures - skipped}/{cases.Length} 成功" + (skipped > 0 ? $"、{skipped}件省略" : ""));
         return failures == 0 ? 0 : 1;
     }
+
+    // 環境の制約で確かめられないケース。失敗ではなく省略として報告する。
+    private sealed class SkipException(string message) : Exception(message);
 
     private static CliRun Cli(params string[] args)
     {
