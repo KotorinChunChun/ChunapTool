@@ -11,6 +11,8 @@ namespace ChunapTool.Tests;
 /// <summary>
 /// chunap.exeを別プロセスで実行し、終了コードとJSONで判定する。各ケースの実行コマンドを表示するので、そのまま手で再現できる。
 /// --cliはウィンドウを変更しない検証、--cli-nativeはこの検証が起動した確認用ウィンドウと、--instanceで分離したGUIだけを操作する。
+/// --cli-nativeの確認用ウィンドウはアクティブにせずZ順の最背面に置き、各ケースの後に前面へ出ていないことを確かめる。
+/// 対象が手前にあることを前提とする機能（座標で選ぶpick・--at、前面ウィンドウを選ぶ--foreground）は--cli-foregroundで検証する。
 /// </summary>
 internal static class CliTests
 {
@@ -167,11 +169,11 @@ internal static class CliTests
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         var tag = Guid.NewGuid().ToString("N")[..8];
         var fixtures = new List<Process>();
+        var guard = new DesktopGuard();
         try
         {
-            var a = StartFixture(fixtures, $"CLI-A-{tag}", "--client", "640x360", "--position", "80,80");
-            var b = StartFixture(fixtures, $"CLI-B-{tag}", "--position", "200,160", "--topmost");
-            return RunCases("CLI実機検証", [
+            var a = StartFixture(fixtures, guard, $"CLI-A-{tag}", "--client", "640x360", "--position", "80,80");
+            return RunCases("CLI実機検証（背面）", [
                 ("get の見える枠はWin32の実測と一致", () => Equal(Win32.Frame(a.Handle), Frame(Json("get", "--hwnd", a.Hex, "--json")["state"]!), "見える枠")),
                 ("set の位置・サイズが実測と一致", () =>
                 {
@@ -239,7 +241,7 @@ internal static class CliTests
                 }),
                 ("一致が複数なら終了コード4で何も変更しない", () =>
                 {
-                    var twin = StartFixture(fixtures, $"CLI-A-{tag}", "--position", "400,200");
+                    var twin = StartFixture(fixtures, guard, $"CLI-A-{tag}", "--position", "400,200");
                     var before = (Win32.Frame(a.Handle), Win32.Frame(twin.Handle));
                     var run = Cli("set", "--title", $"CLI-A-{tag}", "--x", "10", "--json");
                     Equal(4, run.ExitCode, "終了コード");
@@ -248,17 +250,9 @@ internal static class CliTests
                     Stop(twin.Process);
                 }),
                 ("一致がなければ終了コード3", () => Equal(3, Cli("get", "--title", $"CLI-none-{tag}", "--json").ExitCode, "終了コード")),
-                ("pick と --at は座標のウィンドウを選ぶ", () =>
-                {
-                    var frame = Win32.Frame(b.Handle);
-                    var at = $"{frame.X + frame.Width / 2},{frame.Y + frame.Height / 2}";
-                    Equal(b.Hex, Json("pick", "--at", at, "--json")["target"]!["hwnd"]!.GetValue<string>(), "pick");
-                    Json("set", "--at", at, "--width", "450", "--json");
-                    Equal(450, Win32.Frame(b.Handle).Width, "--at で変更");
-                }),
                 ("応答しない対象は終了コード5で要求を送らない", () =>
                 {
-                    var hung = StartFixture(fixtures, $"CLI-hung-{tag}", "--hung", "--position", "500,300");
+                    var hung = StartFixture(fixtures, guard, $"CLI-hung-{tag}", "--hung", "--position", "500,300");
                     Thread.Sleep(300);
                     var before = Win32.Frame(hung.Handle);
                     Equal(5, Cli("set", "--hwnd", hung.Hex, "--x", "20", "--json").ExitCode, "終了コード");
@@ -267,7 +261,7 @@ internal static class CliTests
                 }),
                 ("変更を受け付けない対象は終了コード7", () =>
                 {
-                    var locked = StartFixture(fixtures, $"CLI-locked-{tag}", "--locked", "--position", "600,320");
+                    var locked = StartFixture(fixtures, guard, $"CLI-locked-{tag}", "--locked", "--position", "600,320");
                     var run = Cli("set", "--hwnd", locked.Hex, "--x", "20", "--timeout", "600", "--json");
                     Equal(7, run.ExitCode, "終了コード");
                     Equal("not-confirmed", run.Json!["error"]!["code"]!.GetValue<string>(), "エラーの種類");
@@ -315,7 +309,48 @@ internal static class CliTests
                     var dry = Json("preset", "apply", "HD", "--hwnd", a.Hex, "--dry-run", "--settings-dir", dir, "--json");
                     True(dry["after"] is null && Win32.Client(a.Handle).Size == new Size(720, 405), "--dry-run は不変");
                 })),
-                ("--instance のGUIは利用者のGUIと分離され、一覧から除外される", () => IsolatedGui(tag)),
+                ("--instance のGUIは利用者のGUIと分離され、一覧から除外される", () => IsolatedGui(tag, guard)),
+            ], guard.Check);
+        }
+        finally
+        {
+            foreach (var process in fixtures) Stop(process);
+        }
+    }
+
+    /// <summary>
+    /// 対象が手前にあることを前提とする機能の検証。確認用ウィンドウを最前面に固定して表示し、前面ウィンドウを選ぶ検証では前面化を試みる。
+    /// 他の画面作業をしていない対話デスクトップで実行する。
+    /// </summary>
+    internal static int RunForeground()
+    {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var fixtures = new List<Process>();
+        try
+        {
+            var b = StartFixture(fixtures, null, $"CLI-B-{tag}", "--position", "200,160", "--topmost");
+            return RunCases("CLI前面検証", [
+                ("pick と --at は座標のウィンドウを選ぶ", () =>
+                {
+                    var frame = Win32.Frame(b.Handle);
+                    var at = $"{frame.X + frame.Width / 2},{frame.Y + frame.Height / 2}";
+                    Equal(b.Hex, Json("pick", "--at", at, "--json")["target"]!["hwnd"]!.GetValue<string>(), "pick");
+                    Json("set", "--at", at, "--width", "450", "--json");
+                    Equal(450, Win32.Frame(b.Handle).Width, "--at で変更");
+                }),
+                ("--foreground は前面ウィンドウを選ぶ", () =>
+                {
+                    // Windowsは別のプロセスによる前面化を制限するため、前面にできなかった場合は省略として報告する。
+                    if (Win32.Foreground() != b.Handle) Win32.TrySetForeground(b.Handle);
+                    if (Win32.Foreground() != b.Handle)
+                    {
+                        Console.WriteLine("  省略: 確認用ウィンドウを前面にできません（他の画面の操作中など）。");
+                        return;
+                    }
+                    Equal(b.Hex, Json("get", "--foreground", "--json")["target"]!["hwnd"]!.GetValue<string>(), "前面ウィンドウ");
+                    Equal(3, Cli("get", "--foreground", "--title", $"CLI-none-{tag}", "--json").ExitCode, "条件と一致しない前面ウィンドウ");
+                }),
             ]);
         }
         finally
@@ -325,11 +360,12 @@ internal static class CliTests
     }
 
     // --passive --instanceで起動したGUIは、専用のpipe名で応答し、CLIの一覧に現れない。
-    private static void IsolatedGui(string tag)
+    private static void IsolatedGui(string tag, DesktopGuard guard)
     {
         var instance = "test-" + tag;
         var settings = Path.Combine(Path.GetTempPath(), "chunap-gui-" + tag);
         using var gui = Process.Start(new ProcessStartInfo(ProductPath("ChunapTool.exe"), ["--passive", "--instance", instance, "--settings-dir", settings]))!;
+        guard.Own(gui.Id);
         try
         {
             var response = WaitFor(() => Management("chunap-tool." + instance, "status"), "検証用GUIの応答");
@@ -359,17 +395,57 @@ internal static class CliTests
         catch (Exception ex) when (ex is IOException or TimeoutException) { return null; }
     }
 
-    private static FixtureWindow StartFixture(List<Process> fixtures, string title, params string[] options)
+    // guardを渡すと、アクティブにせず最背面に表示し（--background）、前面化の監視に加える。nullなら通常どおり表示する。
+    private static FixtureWindow StartFixture(List<Process> fixtures, DesktopGuard? guard, string title, params string[] options)
     {
-        var process = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, ["--fixture", "--title", title, .. options]))!;
+        string[] background = guard is null ? [] : ["--background"];
+        var process = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, ["--fixture", "--title", title, .. background, .. options]))!;
         fixtures.Add(process);
+        guard?.Own(process.Id);
         var json = WaitFor(() =>
         {
             var run = Cli("list", "--filter", title, "--json");
             return run.Json?["windows"]?.AsArray().FirstOrDefault(w => w!["pid"]!.GetValue<int>() == process.Id);
         }, "確認用ウィンドウの表示");
         var hex = json["hwnd"]!.GetValue<string>();
-        return new(process, (nint)long.Parse(hex[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture), hex);
+        var handle = (nint)long.Parse(hex[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        if (guard is not null)
+        {
+            // 最背面へ移してから不透明にするため、半透明の属性が外れた時点を表示の完了とする。
+            WaitFor(() => Win32.IsLayered(handle) ? null : "", "確認用ウィンドウの最背面への移動");
+            guard.Track(handle, hex);
+        }
+        return new(process, handle, hex);
+    }
+
+    /// <summary>
+    /// 検証中に、検証用のウィンドウが前面ウィンドウにならないこと、確認用ウィンドウが他のアプリのウィンドウより手前へ出ないことを確かめる。
+    /// 手前に出たかは、確認用ウィンドウより後ろ（Z順で下）にある、他のプロセスの表示中のウィンドウの数が増えたかで判定する。
+    /// 他のアプリのウィンドウは通常手前に追加されるため、利用者の作業による増減では誤検出しない。
+    /// </summary>
+    private sealed class DesktopGuard
+    {
+        private readonly HashSet<uint> ours = [(uint)Environment.ProcessId];
+        private readonly List<(nint Handle, string Hex, int Baseline)> tracked = [];
+
+        internal void Own(int processId) => ours.Add((uint)processId);
+
+        internal void Track(nint handle, string hex) => tracked.Add((handle, hex, Win32.OthersBelow(handle, ours)));
+
+        internal void Check()
+        {
+            var foreground = Win32.Foreground();
+            if (foreground != 0 && ours.Contains(Win32.ProcessOf(foreground)))
+                throw new Exception($"検証用のウィンドウ {Handle(foreground)} が前面ウィンドウになりました。");
+            foreach (var (handle, hex, baseline) in tracked)
+            {
+                if (!Win32.IsWindow(handle)) continue;
+                var below = Win32.OthersBelow(handle, ours);
+                if (below > baseline) throw new Exception($"確認用ウィンドウ {hex} が他のウィンドウより手前に出ました（後ろのウィンドウ {baseline} → {below}）。");
+            }
+        }
+
+        private static string Handle(nint handle) => "0x" + ((long)handle).ToString("X", CultureInfo.InvariantCulture);
     }
 
     private static void Stop(Process process)
@@ -389,13 +465,14 @@ internal static class CliTests
         throw new TimeoutException(what + "を10秒待っても確認できません。");
     }
 
-    private static int RunCases(string name, (string Name, Action Execute)[] cases)
+    // afterEachは各ケースの後の共通確認。失敗するとそのケースを失敗とする。
+    private static int RunCases(string name, (string Name, Action Execute)[] cases, Action? afterEach = null)
     {
         Console.WriteLine($"{name}: chunap = {ProductPath("chunap.exe")}");
         int failures = 0;
         foreach (var test in cases)
         {
-            try { test.Execute(); Console.WriteLine($"成功: {test.Name}"); }
+            try { test.Execute(); afterEach?.Invoke(); Console.WriteLine($"成功: {test.Name}"); }
             catch (Exception ex) { failures++; Console.Error.WriteLine($"失敗: {test.Name}\n{ex}"); }
         }
         Console.WriteLine($"{name}: {cases.Length - failures}/{cases.Length} 成功");
@@ -490,6 +567,51 @@ internal static class CliTests
         }
 
         internal static bool IsZoomed(nint window) => IsZoomedNative(window);
+
+        internal static nint Foreground() => GetForegroundWindow();
+
+        internal static uint ProcessOf(nint window) => GetWindowThreadProcessId(window, out var processId) == 0 ? 0 : processId;
+
+        internal static bool IsWindow(nint window) => IsWindowNative(window);
+
+        // WS_EX_LAYERED（GWL_EXSTYLE）。
+        internal static bool IsLayered(nint window) => (GetWindowLongW(window, -20) & 0x00080000) != 0;
+
+        // Z順で後ろ（GW_HWNDNEXT）にある、指定外のプロセスの表示中のトップレベルウィンドウの数。
+        internal static int OthersBelow(nint window, IReadOnlySet<uint> ignored)
+        {
+            int count = 0;
+            for (var next = GetWindow(window, 2); next != 0; next = GetWindow(next, 2))
+                if (IsWindowVisible(next) && !ignored.Contains(ProcessOf(next))) count++;
+            return count;
+        }
+
+        // 前面化はWindowsの制限で失敗することがある。失敗しても例外にしない。
+        internal static void TrySetForeground(nint window) => SetForegroundWindow(window);
+
+        [DllImport("user32.dll")]
+        private static extern nint GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+        [DllImport("user32.dll", EntryPoint = "IsWindow")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowNative(nint window);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLongW(nint window, int index);
+
+        [DllImport("user32.dll")]
+        private static extern nint GetWindow(nint window, uint command);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(nint window);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(nint window);
 
         internal static Rectangle Client(nint window)
         {

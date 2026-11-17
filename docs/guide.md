@@ -110,9 +110,10 @@ pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -Ui
 pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -Native
 pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -Cli
 pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -CliNative
+pwsh -ExecutionPolicy Bypass -File dev/scripts/test.ps1 -CliForeground
 ```
 
-通常のテストは座標制約・履歴と管理pipeの要求処理の検証です。`-Ui`は不可視・非アクティブな自フォームと偽サービスで画面状態・配置座標・サムネイル管理を確認し、他の画面へ入力しません。実描画やDWMの検証ではありません。`-Cli`は`chunap.exe`を実行して、引数の検査・終了コード・一覧と、一時フォルダーの設定に対する`preset`・`config`を確かめます（ウィンドウと利用者の設定を変更しません）。`-CliNative`は確認用ウィンドウを起動し、`chunap.exe`で操作した結果を、Win32で直接読んだ値と突き合わせます。`--instance`で分離した検証用のGUIも起動するため、普段使っているChunapToolには触れません。通常のテスト、`-Ui`、`-Cli`は、mainへのpushとプルリクエストでGitHub Actions（`windows-latest`）でも実行します。`-Native`は専用のテストウィンドウを一時的に起動してWin32連携を検証するため、他の画面作業をしていない対話デスクトップで実行してください。手動確認用ウィンドウは次で起動できます。
+通常のテストは座標制約・履歴と管理pipeの要求処理の検証です。`-Ui`は不可視・非アクティブな自フォームと偽サービスで画面状態・配置座標・サムネイル管理を確認し、他の画面へ入力しません。実描画やDWMの検証ではありません。`-Cli`は`chunap.exe`を実行して、引数の検査・終了コード・一覧と、一時フォルダーの設定に対する`preset`・`config`を確かめます（ウィンドウと利用者の設定を変更しません）。`-CliNative`は確認用ウィンドウを起動し、`chunap.exe`で操作した結果を、Win32で直接読んだ値と突き合わせます。確認用ウィンドウはアクティブにせずZ順の最背面に表示するため、他の作業の画面の手前には出ません。各ケースの後に、検証用のウィンドウが前面ウィンドウになっていないことと、確認用ウィンドウが他のウィンドウより手前に出ていないことを確かめ、出ていれば失敗とします。`--instance`で分離した検証用のGUIも起動するため、普段使っているChunapToolには触れません。対象が手前にあることを前提とする機能（座標で選ぶ`pick`・`--at`、前面ウィンドウを選ぶ`--foreground`）は`-CliForeground`で検証します。こちらは確認用ウィンドウを最前面に表示し、前面化も試みるため、他の画面作業をしていない対話デスクトップで実行してください（前面にできない場合は`--foreground`の検証を省略として表示します）。通常のテスト、`-Ui`、`-Cli`は、mainへのpushとプルリクエストでGitHub Actions（`windows-latest`）でも実行します。`-Native`は専用のテストウィンドウを一時的に起動してWin32連携を検証するため、他の画面作業をしていない対話デスクトップで実行してください。手動確認用ウィンドウは次で起動できます。
 
 ```powershell
 ./tests/ChunapTool.Tests/bin/Debug/net10.0-windows10.0.19041.0/ChunapTool.Tests.exe --fixture

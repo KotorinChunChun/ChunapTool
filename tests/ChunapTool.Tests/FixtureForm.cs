@@ -15,6 +15,8 @@ internal sealed record FixtureOptions
     public bool Hung { get; init; }
     // 表示後は位置・サイズの変更を受け付けず、反映を確認できない対象を再現する。
     public bool Locked { get; init; }
+    // アクティブにせずZ順の最背面に表示し、利用者が操作中の画面の手前に出さない。
+    public bool Background { get; init; }
 
     internal static FixtureOptions Parse(IReadOnlyList<string> args)
     {
@@ -36,6 +38,7 @@ internal sealed record FixtureOptions
             TopMost = args.Contains("--topmost"),
             Hung = args.Contains("--hung"),
             Locked = args.Contains("--locked"),
+            Background = args.Contains("--background"),
         };
     }
 }
@@ -59,7 +62,9 @@ internal sealed class FixtureForm : BrandedForm
         if (options.ClientSize is { } client) ClientSize = client;
         Rectangle area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
         Location = options.Position ?? new Point(Math.Max(area.Left, area.Right - Width - 24), area.Top + 48);
-        TopMost = options.TopMost;
+        TopMost = options.TopMost && !options.Background;
+        // 表示直後はZ順の最上位に置かれるため、最背面へ移すまで透明にしておく（一瞬でも手前に見せない）。
+        if (options.Background) Opacity = 0;
         BackColor = Color.FromArgb(19, 32, 51);
         ForeColor = Color.White;
         Font = new Font("Yu Gothic UI", 12);
@@ -68,10 +73,22 @@ internal sealed class FixtureForm : BrandedForm
         _clock.Start();
         Shown += (_, _) =>
         {
+            // HWND_BOTTOM、SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE。
+            if (options.Background)
+            {
+                SetWindowPos(Handle, 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+                Opacity = 1;
+            }
             _locked = options.Locked;
             if (options.Hung) BeginInvoke(() => { while (true) Thread.Sleep(60000); });
         };
     }
+
+    protected override bool ShowWithoutActivation => _options.Background;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
 
     protected override void WndProc(ref Message m)
     {

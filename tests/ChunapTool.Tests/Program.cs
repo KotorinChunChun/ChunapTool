@@ -9,6 +9,7 @@ internal static class Program
         if (args.SequenceEqual(new[] { "--native" })) return NativeTests.Run();
         if (args.SequenceEqual(new[] { "--cli" })) return CliTests.RunLogic();
         if (args.SequenceEqual(new[] { "--cli-native" })) return CliTests.RunNative();
+        if (args.SequenceEqual(new[] { "--cli-foreground" })) return CliTests.RunForeground();
         if (args.SequenceEqual(new[] { "--ui" }))
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -45,7 +46,7 @@ internal static class Program
 
         if (args.Length > 0)
         {
-            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--cliでCLI論理検証、--cli-nativeでCLI実機検証、--fixtureで動作確認用画面を起動します。");
+            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--cliでCLI論理検証、--cli-nativeでCLI実機検証（背面）、--cli-foregroundでCLI前面検証、--fixtureで動作確認用画面を起動します。");
             return 2;
         }
 
