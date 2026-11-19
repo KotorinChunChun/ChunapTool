@@ -95,7 +95,7 @@ internal sealed class FixtureForm : BrandedForm
         get
         {
             var parameters = base.CreateParams;
-            if (_options?.OwnedPassive == true) parameters.ExStyle |= 0x08000000;
+            if (_options is { OwnedPassive: true } or { Background: true }) parameters.ExStyle |= 0x08000000;
             return parameters;
         }
     }

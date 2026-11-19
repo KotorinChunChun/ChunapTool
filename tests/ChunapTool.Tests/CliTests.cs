@@ -173,20 +173,24 @@ internal static class CliTests
         try
         {
             var a = StartFixture(fixtures, guard, $"CLI-A-{tag}", "--client", "640x360", "--position", "80,80");
+            var initialArea = Screen.FromHandle(a.Handle).WorkingArea;
+            string initialX = (initialArea.Left + 120).ToString(CultureInfo.InvariantCulture);
+            string initialY = (initialArea.Top + 100).ToString(CultureInfo.InvariantCulture);
             return RunCases("CLI実機検証（背面）", [
                 ("get の見える枠はWin32の実測と一致", () => Equal(Win32.Frame(a.Handle), Frame(Json("get", "--hwnd", a.Hex, "--json")["state"]!), "見える枠")),
                 ("set の位置・サイズが実測と一致", () =>
                 {
-                    var after = Json("set", "--hwnd", a.Hex, "--x", "120", "--y", "100", "--width", "700", "--height", "420", "--json")["after"]!;
-                    Equal(new Rectangle(120, 100, 700, 420), Frame(after), "結果");
-                    Equal(new Rectangle(120, 100, 700, 420), Win32.Frame(a.Handle), "実測");
+                    var after = Json("set", "--hwnd", a.Hex, "--x", initialX, "--y", initialY, "--width", "700", "--height", "420", "--json")["after"]!;
+                    Equal(new Rectangle(initialArea.Left + 120, initialArea.Top + 100, 700, 420), Frame(after), "結果");
+                    Equal(new Rectangle(initialArea.Left + 120, initialArea.Top + 100, 700, 420), Win32.Frame(a.Handle), "実測");
                 }),
                 ("--dry-run は計算だけで変更しない", () =>
                 {
                     var before = Win32.Frame(a.Handle);
-                    var json = Json("set", "--hwnd", a.Hex, "--x", "300", "--dry-run", "--json");
+                    int requestedX = Screen.FromHandle(a.Handle).WorkingArea.Left + 300;
+                    var json = Json("set", "--hwnd", a.Hex, "--x", requestedX.ToString(CultureInfo.InvariantCulture), "--dry-run", "--json");
                     True(json["dryRun"]!.GetValue<bool>() && json["after"] is null, "試行の表示");
-                    Equal(300, json["requested"]!["x"]!.GetValue<int>(), "要求の計算");
+                    Equal(requestedX, json["requested"]!["x"]!.GetValue<int>(), "要求の計算");
                     Equal(before, Win32.Frame(a.Handle), "実測は不変");
                 }),
                 ("指定しない値は現在の値を保つ", () =>
@@ -281,14 +285,16 @@ internal static class CliTests
                 }),
                 ("同じ要求をframeとclientで出すと、差は枠の太さと一致", () =>
                 {
-                    Json("set", "--hwnd", a.Hex, "--x", "100", "--y", "100", "--width", "700", "--height", "400", "--json");
+                    var area = Screen.FromHandle(a.Handle).WorkingArea;
+                    int x = area.Left + 100, y = area.Top + 100;
+                    Json("set", "--hwnd", a.Hex, "--x", x.ToString(CultureInfo.InvariantCulture), "--y", y.ToString(CultureInfo.InvariantCulture), "--width", "700", "--height", "400", "--json");
                     var frame = Win32.Frame(a.Handle);
                     var client = Win32.Client(a.Handle);
-                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--x", "100", "--y", "100", "--width", "700", "--height", "400", "--json");
+                    Json("set", "--hwnd", a.Hex, "--basis", "client", "--x", x.ToString(CultureInfo.InvariantCulture), "--y", y.ToString(CultureInfo.InvariantCulture), "--width", "700", "--height", "400", "--json");
                     var byClient = Win32.Frame(a.Handle);
-                    Equal(new Rectangle(100, 100, 700, 400), Win32.Client(a.Handle), "中身が要求どおり");
+                    Equal(new Rectangle(x, y, 700, 400), Win32.Client(a.Handle), "中身が要求どおり");
                     Equal(new Size(frame.Width - client.Width, frame.Height - client.Height), new Size(byClient.Width - 700, byClient.Height - 400), "枠の太さの差");
-                    Equal(new Point(100 - (client.X - frame.X), 100 - (client.Y - frame.Y)), byClient.Location, "左上の差");
+                    Equal(new Point(x - (client.X - frame.X), y - (client.Y - frame.Y)), byClient.Location, "左上の差");
                 }),
                 ("--keep-aspect と --aspect で縦横比を保つ", () =>
                 {
