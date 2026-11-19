@@ -4,7 +4,7 @@
 
 Windows 11 x64向けのZIPをすべて展開してから`ChunapTool.exe`を起動します。.NET 10ランタイムを同梱しているため、別途ランタイムを導入する必要はありません。Python・FFmpegも不要です。古いバージョンが起動中の場合は終了してから新しいバージョンを起動します。ZIPと同時に配布する`SHA256SUMS.txt`でファイルのハッシュを確認できます。
 
-インストーラー版（`ChunapTool-0.1.2-setup.exe`）とKotorinToys 0.1.2以降の本体からの導入・更新・削除は[導入と削除](install.md)を参照してください。
+インストーラー版（`ChunapTool-0.1.3-setup.exe`）とKotorinToys 0.1.2以降の本体からの導入・更新・削除は[導入と削除](install.md)を参照してください。
 
 ## 操作
 

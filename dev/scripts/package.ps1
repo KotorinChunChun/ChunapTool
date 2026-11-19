@@ -49,6 +49,7 @@ foreach ($framework in $runtimeConfig.runtimeOptions.includedFrameworks) {
     $notices = Join-Path $runtimePackage 'THIRD-PARTY-NOTICES.TXT'
     if (Test-Path -LiteralPath $notices) { Copy-Item -LiteralPath $notices -Destination $noticesDirectory }
 }
+Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $publishDirectory 'LICENSE')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/guide.md') -Destination (Join-Path $publishDirectory '利用ガイド.md')
 @"
 ChunapTool v$version ポータブル版
