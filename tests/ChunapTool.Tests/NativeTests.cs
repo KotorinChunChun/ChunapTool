@@ -331,6 +331,7 @@ internal static class NativeTests
     // 候補だけでなくWin32に委譲する全経路を、今回のPID・HWNDの組に限定する。
     private sealed class FixtureScope(NativeWindowService native, Process fixture, WindowEntry entry) : IWindowService
     {
+        public WindowIdentity? GetForeground() => null;
         public int Applies { get; private set; }
         public int Restores { get; private set; }
         private bool Owns(WindowIdentity target) => target == entry.Identity && target.ProcessId == (uint)fixture.Id

@@ -10,11 +10,14 @@ public sealed record WindowState(WindowIdentity Target, WindowBounds Bounds, Win
 {
     // 透明なリサイズ枠を含むGetWindowRectの外枠。スナップ中など通常復元位置と実位置が異なる状態の復元に使う。
     public WindowBounds? OuterBounds { get; init; }
+    // クライアント領域の画面座標。取得できない場合（偽サービスなど）はnullとし、見える枠を基準に扱う。
+    public WindowBounds? ClientBounds { get; init; }
     public bool IsMaximized => Placement.ShowCommand == 3;
     public bool IsMinimized => Placement.ShowCommand is 2 or 6 or 7 or 11;
 }
 public sealed record WindowEntry(WindowIdentity Identity, string Title, string ProcessName)
 {
+    public string ClassName { get; init; } = "";
     public override string ToString() => $"[{ProcessName}] {Title} ({Identity.ProcessId})";
 }
 public interface IWindowService
@@ -25,5 +28,7 @@ public interface IWindowService
     void ApplyBounds(WindowIdentity target, WindowBounds bounds);
     void SetMaximized(WindowIdentity target, bool maximized);
     void Restore(WindowState state);
+    // 前面ウィンドウのトップレベル。取得できなければnull。
+    WindowIdentity? GetForeground();
     bool IsLeftButtonDown { get; }
 }

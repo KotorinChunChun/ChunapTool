@@ -21,6 +21,9 @@ internal static class Program
             && TryInteger(x, out int left) && TryInteger(y, out int top)
             && TryInteger(w, out int width) && TryInteger(h, out int height) && width > 0 && height > 0)
             return NativeTests.Run(new WindowBounds(left, top, width, height));
+        if (args.SequenceEqual(new[] { "--cli" })) return CliTests.RunLogic();
+        if (args.SequenceEqual(new[] { "--cli-native" })) return CliTests.RunNative();
+        if (args.SequenceEqual(new[] { "--cli-foreground" })) return CliTests.RunForeground();
         if (args.SequenceEqual(new[] { "--ui" }))
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -46,16 +49,15 @@ internal static class Program
             Application.Run(context);
             return result;
         }
-        if (args is ["--fixture"] or ["--fixture", "--owned-passive"])
+        if (args.FirstOrDefault() == "--fixture")
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            bool ownedPassive = args.Length == 2;
-            using var fixture = new FixtureForm(ownedPassive);
-            if (ownedPassive) fixture.Shown += async (_, _) =>
+            var options = FixtureOptions.Parse(args);
+            using var fixture = new FixtureForm(options);
+            if (options.OwnedPassive) fixture.Shown += async (_, _) =>
             {
-                // 親が閉じた専用の標準入力だけを終了通知に使う。
                 try { await Task.Run(() => Console.In.ReadLine()); }
                 catch (IOException) { }
                 fixture.Close();
@@ -66,13 +68,15 @@ internal static class Program
 
         if (args.Length > 0)
         {
-            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--fixtureで動作確認用画面を起動します。");
+            Console.Error.WriteLine("使用方法: 引数なしで単体検証、--uiで不可視画面回帰、--nativeで実機検証、--cliでCLI論理検証、--cli-nativeでCLI実機検証（背面）、--cli-foregroundでCLI前面検証、--fixtureで動作確認用画面を起動します。");
             Console.Error.WriteLine("専用ウィンドウの指定矩形を検証: --native --fixture X Y W H（整数、幅・高さは正数）");
             return 2;
         }
 
         ManagementTests.Run(Path.GetTempPath());
-        return CoreTests.Run();
+        int core = CoreTests.Run();
+        int settings = SettingsTests.Run();
+        return core == 0 && settings == 0 ? 0 : 1;
     }
 
     private static bool TryInteger(string value, out int number) =>

@@ -11,6 +11,8 @@ internal static class NativeMethods
     internal const int InvalidWindowHandle = 1400;
     internal const int Timeout = 1460;
     internal const uint AsyncWindowPlacement = 0x0004;
+    // SWP_ASYNCWINDOWPOS | SWP_NOZORDER | SWP_NOACTIVATE。対象アプリの処理をUIスレッドで待たず、前面化やZ順の変更もしない。
+    internal const uint AsyncMoveWithoutActivation = 0x4000 | 0x0004 | 0x0010;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect
@@ -81,6 +83,12 @@ internal static class NativeMethods
     internal static extern int GetWindowTextLengthW(nint window);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int GetClassNameW(nint window, StringBuilder name, int maximumCount);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetWindowTextW(nint window, StringBuilder text, int maximumCount);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -113,6 +121,14 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern short GetAsyncKeyState(int key);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetClientRect(nint window, out Rect rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ClientToScreen(nint window, ref Point point);
 
     [DllImport("user32.dll")]
     internal static extern nint MonitorFromWindow(nint window, uint flags);

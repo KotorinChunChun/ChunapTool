@@ -44,7 +44,7 @@ public sealed class NativeWindowService : IWindowService
             if (Matches(identity) && (search.Length == 0
                 || title.Contains(search, StringComparison.OrdinalIgnoreCase)
                 || processName.Contains(search, StringComparison.OrdinalIgnoreCase)))
-                entries.Add(new WindowEntry(identity, title, processName));
+                entries.Add(new WindowEntry(identity, title, processName) { ClassName = GetClassName(window) });
             return true;
         };
         if (!NativeMethods.EnumWindows(callback, 0))
@@ -75,13 +75,14 @@ public sealed class NativeWindowService : IWindowService
         }
         bool canMaximize = (NativeMethods.GetWindowLong(target.Handle, -16) & 0x00010000) != 0;
         WindowBounds? outerBounds = NativeMethods.GetWindowRect(target.Handle, out var outer) ? ToBounds(outer) : null;
+        var clientBounds = GetClientBounds(target.Handle);
         if (!Matches(target))
             return null;
         // 非同期指定は操作方法であり、Undoの比較対象となる位置状態には含めない。
         var savedPlacement = new WindowPlacement(placement.Flags & ~NativeMethods.AsyncWindowPlacement,
             placement.ShowCommand, new WindowPoint(placement.MinPosition.X, placement.MinPosition.Y),
             new WindowPoint(placement.MaxPosition.X, placement.MaxPosition.Y), ToBounds(placement.NormalPosition));
-        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize) { OuterBounds = outerBounds };
+        return new WindowState(target, ToBounds(visual), savedPlacement, canMaximize) { OuterBounds = outerBounds, ClientBounds = clientBounds };
     }
 
     public WindowBounds GetWorkArea(WindowIdentity target)
@@ -118,9 +119,7 @@ public sealed class NativeWindowService : IWindowService
         if (width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(bounds), "補正後のウィンドウサイズが不正です。");
         EnsureTarget(target);
-        // 対象アプリの処理をUIスレッドで待たず、前面化やZ順の変更もしない。
-        const uint flags = 0x4000 | 0x0004 | 0x0010;
-        if (!NativeMethods.SetWindowPos(target.Handle, 0, x, y, width, height, flags))
+        if (!NativeMethods.SetWindowPos(target.Handle, 0, x, y, width, height, NativeMethods.AsyncMoveWithoutActivation))
             throw LastError("位置・サイズ変更を要求できませんでした。");
     }
 
@@ -156,10 +155,23 @@ public sealed class NativeWindowService : IWindowService
         // 非同期要求は対象スレッドで順に処理されるため、配置の復元後に位置が確定する。
         if (state is { IsMaximized: false, IsMinimized: false, OuterBounds: { } outer })
         {
-            const uint flags = 0x4000 | 0x0004 | 0x0010;
-            if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, flags))
+            if (!NativeMethods.SetWindowPos(state.Target.Handle, 0, outer.X, outer.Y, outer.Width, outer.Height, NativeMethods.AsyncMoveWithoutActivation))
                 throw LastError("保存したウィンドウ位置を復元できませんでした。");
         }
+    }
+
+    public WindowIdentity? GetForeground()
+    {
+        nint window = NativeMethods.GetAncestor(NativeMethods.GetForegroundWindow(), 2);
+        if (window == 0 || NativeMethods.GetWindowThreadProcessId(window, out uint processId) == 0)
+            return null;
+        return new WindowIdentity(window, processId);
+    }
+
+    internal static string GetClassName(nint window)
+    {
+        var buffer = new StringBuilder(256);
+        return NativeMethods.GetClassNameW(window, buffer, buffer.Capacity) > 0 ? buffer.ToString() : "";
     }
 
     internal static bool Matches(WindowIdentity target) => target.Handle != 0
@@ -196,6 +208,17 @@ public sealed class NativeWindowService : IWindowService
         uint capacity = (uint)buffer.Capacity;
         return NativeMethods.QueryFullProcessImageNameW(process, 0, buffer, ref capacity)
             ? Path.GetFileName(buffer.ToString()) : "不明";
+    }
+
+    // 最小化中はクライアント領域が0になるため、基準の換算に使わない。
+    private static WindowBounds? GetClientBounds(nint window)
+    {
+        if (!NativeMethods.GetClientRect(window, out var client) || client.Right <= 0 || client.Bottom <= 0)
+            return null;
+        var origin = new NativeMethods.Point();
+        if (!NativeMethods.ClientToScreen(window, ref origin))
+            return null;
+        return new WindowBounds(origin.X, origin.Y, client.Right, client.Bottom);
     }
 
     private static bool TryGetVisualRect(nint window, out NativeMethods.Rect rect)

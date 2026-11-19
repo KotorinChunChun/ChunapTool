@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ChunapTool;
 
 internal static class Program
@@ -6,10 +8,30 @@ internal static class Program
     private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        using var singleInstance = new Mutex(true, @"Local\ChunapTool", out var firstInstance);
+        // --instanceを指定すると、ミューテックスと管理pipeの名前を分ける。検証用の起動が利用者の画面に触れないようにする。
+        var instance = Option(args, "--instance");
+        if (instance is not null && !Regex.IsMatch(instance, "^[A-Za-z0-9-]{1,64}$"))
+        {
+            if (!args.Contains("--passive"))
+                MessageBox.Show("--instance には英数字とハイフンを64文字以内で指定してください。", WindowTitle.Create(),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        // 設定の場所は--settings-dirで変えられる（検証用の起動が利用者の設定に触れないようにする）。
+        Core.SettingsStore settings;
+        try { settings = new Core.SettingsStore(Option(args, "--settings-dir") ?? Core.SettingsStore.DefaultDirectory); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            if (!args.Contains("--passive"))
+                MessageBox.Show("--settings-dir のフォルダー名が不正です: " + ex.Message, WindowTitle.Create(),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        var managementId = instance is null ? "chunap-tool" : "chunap-tool." + instance;
+        using var singleInstance = new Mutex(true, instance is null ? @"Local\ChunapTool" : @"Local\ChunapTool." + instance, out var firstInstance);
         if (!firstInstance)
         {
-            var problem = KotorinToys.Integration.ManagementEndpoint.ShowExisting("chunap-tool");
+            var problem = KotorinToys.Integration.ManagementEndpoint.ShowExisting(managementId);
             // 常駐起動と検証では対話表示しない。手動起動で既存画面を出せないときだけ理由を伝える。
             if (problem is not null && !args.Contains("--startup") && !args.Contains("--passive"))
             {
@@ -23,11 +45,17 @@ internal static class Program
         }
         try
         {
-            var window = new MainForm(new Native.NativeWindowService(), args.Contains("--passive"));
-            using var context = new KotorinToys.Integration.ManagedToolContext("chunap-tool", window,
+            var window = new MainForm(new Native.NativeWindowService(), args.Contains("--passive"), settings: settings);
+            using var context = new KotorinToys.Integration.ManagedToolContext(managementId, window,
                 args.Contains("--startup"), () => window.ManagementStopBlockReason);
             Application.Run(context);
         }
         finally { singleInstance.ReleaseMutex(); }
+    }
+
+    private static string? Option(string[] args, string name)
+    {
+        var index = Array.IndexOf(args, name);
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 }

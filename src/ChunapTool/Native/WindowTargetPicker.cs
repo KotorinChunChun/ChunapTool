@@ -19,6 +19,9 @@ internal sealed class WindowTargetPicker : IWindowTargetPicker
         if (string.IsNullOrWhiteSpace(title.ToString())) return null;
         var identity = new WindowIdentity(window, processId);
         if (!NativeWindowService.Matches(identity)) return null;
-        return new WindowEntry(identity, title.ToString(), NativeWindowService.GetProcessName(processId));
+        return new WindowEntry(identity, title.ToString(), NativeWindowService.GetProcessName(processId))
+        {
+            ClassName = NativeWindowService.GetClassName(window)
+        };
     }
 }

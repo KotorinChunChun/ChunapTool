@@ -17,11 +17,22 @@ dotnet publish $projectFile -c Release -r win-x64 --self-contained true `
     --artifacts-path (Join-Path $runDirectory 'build') -p:DebugType=None -p:DebugSymbols=false `
     -o $publishDirectory --nologo 2>&1 | Tee-Object -FilePath (Join-Path $runDirectory 'publish.log') | Out-Host
 if ($LASTEXITCODE) { throw '配布用ビルドに失敗しました。' }
-foreach ($name in @('ChunapTool.exe', 'ChunapTool.dll', 'coreclr.dll', 'hostfxr.dll', 'System.Windows.Forms.dll')) {
+# コマンドライン（chunap.exe）を同じフォルダーへ発行し、GUIとランタイムを共有する。
+$cliProjectFile = Join-Path $projectRoot 'src/ChunapTool.Cli/ChunapTool.Cli.csproj'
+dotnet publish $cliProjectFile -c Release -r win-x64 --self-contained true `
+    --artifacts-path (Join-Path $runDirectory 'build') -p:DebugType=None -p:DebugSymbols=false `
+    -o $publishDirectory --nologo 2>&1 | Tee-Object -FilePath (Join-Path $runDirectory 'publish-cli.log') | Out-Host
+if ($LASTEXITCODE) { throw 'コマンドラインの配布用ビルドに失敗しました。' }
+foreach ($name in @('ChunapTool.exe', 'ChunapTool.dll', 'chunap.exe', 'chunap.dll', 'coreclr.dll', 'hostfxr.dll', 'System.Windows.Forms.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory $name))) { throw "配布ファイルが不足しています: $name" }
 }
-$exeVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $publishDirectory 'ChunapTool.exe')).FileVersion
-if ($exeVersion -ne "$version.0") { throw '配布EXEのバージョンが一致しません。' }
+foreach ($exe in @('ChunapTool.exe', 'chunap.exe')) {
+    $exeVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $publishDirectory $exe)).FileVersion
+    if ($exeVersion -ne "$version.0") { throw "配布EXEのバージョンが一致しません: $exe" }
+}
+# 発行したCLIが起動でき、製品と同じ版を返すことを確かめる（ウィンドウは操作しない）。
+$cliVersion = (& (Join-Path $publishDirectory 'chunap.exe') version --json | ConvertFrom-Json).version
+if ($LASTEXITCODE -or $cliVersion -ne $version) { throw "chunap.exeの版を確認できません: $cliVersion" }
 $runtimeConfig = Get-Content -LiteralPath (Join-Path $publishDirectory 'ChunapTool.runtimeconfig.json') -Raw | ConvertFrom-Json
 $assets = Get-Content -LiteralPath (Join-Path $runDirectory 'build/obj/ChunapTool/project.assets.json') -Raw | ConvertFrom-Json
 foreach ($framework in $runtimeConfig.runtimeOptions.includedFrameworks) {
@@ -46,6 +57,10 @@ Windows 11 x64向け。.NET 10ランタイムを同梱しています。
 ZIPをすべて展開し、ChunapTool.exeを起動してください。
 既に起動している場合は、終了してから新版を起動してください。
 インストールやPython・FFmpegの導入は不要です。
+
+同じフォルダーのchunap.exeは、位置・サイズ・最大化・プリセット・設定を
+操作できるコマンドラインです（chunap help で使い方を表示）。
+設定とプリセットは %LOCALAPPDATA%\KotorinToys\ChunapTool\settings.json に保存します。
 
 詳しい操作は「利用ガイド.md」を参照してください。
 未署名の配布物です。SHA256SUMS.txtでZIPのハッシュを照合できます。

@@ -38,6 +38,8 @@ internal static class CoreTests
             ("別対象のUndo結果は旧履歴と混在させない", HistoryAcceptDifferentTarget),
             ("最小化状態ではUndoの成功を確定しない", HistoryRejectMinimizedUndo),
             ("一覧とドラッグ選択で同じ方法により実行ファイル名を得る", ProcessNameFromImage),
+            ("対象の指定はすべての条件を満たすものだけを選ぶ", SelectorAllConditions),
+            ("対象の指定はChunapTool自身と座標・前面の不一致を除外", SelectorExclusions),
         ];
 
         int failures = 0;
@@ -354,6 +356,35 @@ internal static class CoreTests
         Equal(1, history.Count);
         Equal(State(10), history.Current);
     }
+
+    private static void SelectorAllConditions()
+    {
+        var entries = SelectorEntries();
+        Equal(2, TargetSelector.Filter(entries, new TargetCriteria { Title = "メモ" }, null).Count);
+        Equal(1, TargetSelector.Filter(entries, new TargetCriteria { Title = "メモ", Process = "NOTEPAD.EXE" }, null).Count);
+        Equal(1, TargetSelector.Filter(entries, new TargetCriteria { TitleExact = "メモ帳" }, null).Count);
+        Equal(0, TargetSelector.Filter(entries, new TargetCriteria { TitleExact = "メモ" }, null).Count);
+        Equal(1, TargetSelector.Filter(entries, new TargetCriteria { ClassName = "Notepad" }, null).Count);
+        Equal(1, TargetSelector.Filter(entries, new TargetCriteria { Handle = 2, ProcessId = 20 }, null).Count);
+        Equal(0, TargetSelector.Filter(entries, new TargetCriteria { Handle = 2, ProcessId = 10 }, null).Count);
+        True(new TargetCriteria().IsEmpty && !new TargetCriteria { Foreground = true }.IsEmpty, "条件の有無");
+    }
+
+    private static void SelectorExclusions()
+    {
+        var entries = SelectorEntries();
+        Equal(0, TargetSelector.Filter(entries, new TargetCriteria { Title = "ChunapTool" }, null).Count);
+        Equal(1, TargetSelector.Filter(entries, new TargetCriteria { Title = "メモ" }, new WindowIdentity(2, 20)).Count);
+        Equal(0, TargetSelector.Filter(entries, new TargetCriteria { Process = "notepad.exe" }, new WindowIdentity(2, 20)).Count);
+    }
+
+    private static WindowEntry[] SelectorEntries() =>
+    [
+        new(new WindowIdentity(1, 10), "メモ帳", "notepad.exe") { ClassName = "Notepad" },
+        new(new WindowIdentity(2, 20), "メモの下書き", "editor.exe") { ClassName = "EditorWindow" },
+        new(new WindowIdentity(3, 30), "ChunapTool - ver 0.1.2", "ChunapTool.exe"),
+        new(new WindowIdentity(4, 40), "ChunapTool CLI", "chunap.exe"),
+    ];
 
     private static void ProcessNameFromImage()
     {
